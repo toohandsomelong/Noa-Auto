@@ -1,0 +1,8 @@
+pywin32>=310
+psutil>=5.9
+pillow>=10.0
+pystray>=0.19
+
+# Install:
+#   conda install -n base pywin32 psutil pillow
+#   pip install pystray
