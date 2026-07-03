@@ -1,15 +1,20 @@
 import os
 import datetime
+import queue
+import threading
 
 
 class Logger:
     def __init__(self, log_dir="logs"):
         self.log_dir = log_dir
         self.callbacks = []
+        self._pending = queue.Queue()
+        self._lock = threading.Lock()
         os.makedirs(log_dir, exist_ok=True)
 
     def on_log(self, callback):
-        self.callbacks.append(callback)
+        with self._lock:
+            self.callbacks.append(callback)
 
     def info(self, message):
         self._log("INFO", message)
@@ -32,5 +37,18 @@ class Logger:
         with open(file_path, "a", encoding="utf-8") as f:
             f.write(line + "\n")
 
-        for cb in self.callbacks:
-            cb(line)
+        with self._lock:
+            callbacks = list(self.callbacks)
+        for cb in callbacks:
+            self._pending.put((cb, line))
+
+    def flush(self):
+        while True:
+            try:
+                cb, line = self._pending.get_nowait()
+            except queue.Empty:
+                break
+            try:
+                cb(line)
+            except Exception:
+                pass

@@ -28,6 +28,9 @@ class GameLauncher:
 
         return process, hwnd
 
+    def find_existing_window(self):
+        return self._find_game_window(timeout=3)
+
     def _find_game_window(self, timeout=30):
         keywords = ["ウマ娘", "Uma Musume", "Umamusume", "umamusume"]
         deadline = time.time() + timeout
@@ -39,7 +42,7 @@ class GameLauncher:
                     for kw in keywords:
                         if kw in title:
                             found.append((hwnd, title))
-                            return False
+                            break
                 return True
             win32gui.EnumWindows(enum_callback, None)
             if found:

@@ -2,7 +2,11 @@ pywin32>=310
 psutil>=5.9
 pillow>=10.0
 pystray>=0.19
+mss>=9.0
+opencv-python>=4.8
+numpy>=1.24
+pyautogui>=0.9.54
 
 # Install:
 #   conda install -n base pywin32 psutil pillow
-#   pip install pystray
+#   pip install pystray mss opencv-python numpy pyautogui

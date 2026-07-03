@@ -1,4 +1,6 @@
+import json
 import os
+import queue
 import time
 import threading
 import tkinter as tk
@@ -17,15 +19,21 @@ except ImportError:
     HAS_TRAY = False
 
 
+CONFIG_FILE = "config.json"
+
+
 class App:
-    def __init__(self, logger, state_manager, game_launcher, focus_watcher):
+    def __init__(self, logger, state_manager, game_launcher, focus_watcher, screen_bot=None):
         self.logger = logger
         self.state_manager = state_manager
         self.game_launcher = game_launcher
         self.focus_watcher = focus_watcher
+        self.screen_bot = screen_bot
         self._process = None
         self._hwnd = None
         self._tray_icon = None
+        self._ui_queue: queue.Queue = queue.Queue()
+        self._running = True
 
         self.root = tk.Tk()
         self.root.title("Auto Trainer")
@@ -35,6 +43,7 @@ class App:
 
         self._build_ui()
         logger.on_log(self._append_log)
+        self._load_config()
 
     def _build_ui(self):
         path_frame = tk.Frame(self.root)
@@ -65,7 +74,7 @@ class App:
             control_frame, text="\u25a0  Stop", command=self._stop,
             state=tk.DISABLED, width=10
         )
-        self.stop_btn.pack(side=tk.LEFT)
+        self.stop_btn.pack(side=tk.LEFT, padx=(0, 5))
 
         log_frame = tk.Frame(self.root)
         log_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 10))
@@ -84,6 +93,24 @@ class App:
         self.log_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
 
+    def _load_config(self):
+        try:
+            with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+                config = json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError):
+            return
+
+        path = config.get("game_path", "")
+        if path:
+            self.path_var.set(path)
+
+    def _save_config(self):
+        try:
+            with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+                json.dump({"game_path": self.path_var.get().strip()}, f)
+        except Exception as e:
+            self.logger.error(f"Failed to save config: {e}")
+
     def _browse(self):
         path = filedialog.askopenfilename(
             title="Select Game Executable",
@@ -91,6 +118,7 @@ class App:
         )
         if path:
             self.path_var.set(path)
+            self._save_config()
 
     def _start(self):
         if self.state_manager.is_active():
@@ -105,11 +133,44 @@ class App:
             self.logger.error(f"Path not found: {path}")
             return
 
+        self._save_config()
+
+        existing_hwnd = self.game_launcher.find_existing_window()
+        if existing_hwnd is not None:
+            self.logger.warning("Game already running; reusing existing window")
+            self.state_manager.state = BotState.RUNNING
+            self._update_ui_state()
+            threading.Thread(
+                target=self._attach, args=(existing_hwnd,), daemon=True
+            ).start()
+            return
+
         self.logger.info(f"Starting game: {path}")
         self.state_manager.state = BotState.RUNNING
         self._update_ui_state()
 
         threading.Thread(target=self._launch, args=(path,), daemon=True).start()
+
+    def _attach(self, hwnd):
+        self._hwnd = hwnd
+        self.focus_watcher.hwnd = hwnd
+        self.focus_watcher.set_callback(self._on_focus_change)
+
+        self.logger.info(f"Game HWND: {hwnd}")
+        self.logger.info(f"Foreground window: \"{self.focus_watcher.foreground_title}\"")
+
+        if self.focus_watcher.is_focused:
+            self.state_manager.state = BotState.RUNNING
+            self.logger.state("RUNNING \u2014 game focused")
+        else:
+            self.state_manager.state = BotState.PAUSED
+            self.logger.state("PAUSED \u2014 game unfocused")
+        self._ui_queue.put(self._update_ui_state)
+
+        self.focus_watcher.start()
+        if self.screen_bot is not None:
+            self.screen_bot.start()
+        self._monitor_process()
 
     def _launch(self, path):
         try:
@@ -142,9 +203,11 @@ class App:
         else:
             self.state_manager.state = BotState.PAUSED
             self.logger.state("PAUSED \u2014 game unfocused")
-        self.root.after(0, self._update_ui_state)
+        self._ui_queue.put(self._update_ui_state)
 
         self.focus_watcher.start()
+        if self.screen_bot is not None:
+            self.screen_bot.start()
         self._monitor_process()
 
     def _monitor_process(self):
@@ -153,7 +216,7 @@ class App:
                 if not self.focus_watcher.is_window_alive:
                     self.logger.state("STOPPED \u2014 game window closed")
                     self.state_manager.state = BotState.STOPPED
-                    self.root.after(0, self._cleanup)
+                    self._ui_queue.put(self._cleanup)
                     break
                 time.sleep(1)
         threading.Thread(target=monitor, daemon=True).start()
@@ -165,13 +228,15 @@ class App:
         else:
             self.state_manager.state = BotState.PAUSED
             self.logger.state("PAUSED \u2014 game unfocused")
-        self.root.after(0, self._update_ui_state)
+        self._ui_queue.put(self._update_ui_state)
 
     def _stop(self):
         self.logger.info("User requested stop")
         self._cleanup()
 
     def _cleanup(self):
+        if self.screen_bot is not None:
+            self.screen_bot.stop()
         self.focus_watcher.stop()
         self._reset_state()
 
@@ -180,7 +245,7 @@ class App:
         self._process = None
         self._hwnd = None
         self.focus_watcher.hwnd = None
-        self.root.after(0, self._update_ui_state)
+        self._ui_queue.put(self._update_ui_state)
 
     def _update_ui_state(self):
         s = self.state_manager.state.value
@@ -202,12 +267,19 @@ class App:
         self.log_text.see(tk.END)
         self.log_text.config(state=tk.DISABLED)
 
+    def _flush_ui_queue(self):
+        while True:
+            try:
+                fn = self._ui_queue.get_nowait()
+            except queue.Empty:
+                break
+            try:
+                fn()
+            except tk.TclError:
+                pass
+
     def _on_close(self):
-        if self.state_manager.is_active():
-            self.root.withdraw()
-            self._show_tray()
-        else:
-            self._exit()
+        self._exit()
 
     def _show_tray(self):
         if not HAS_TRAY:
@@ -242,7 +314,10 @@ class App:
         self.root.lift()
 
     def _exit(self):
+        self._running = False
         self._restore()
+        if self.screen_bot is not None:
+            self.screen_bot.stop()
         self.focus_watcher.stop()
         if self._process:
             try:
@@ -253,8 +328,10 @@ class App:
 
     def run(self):
         try:
-            while True:
+            while self._running:
                 self.root.update()
+                self.logger.flush()
+                self._flush_ui_queue()
                 time.sleep(0.05)
         except tk.TclError:
             pass

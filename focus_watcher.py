@@ -46,7 +46,7 @@ class FocusWatcher:
                 for kw in GAME_KEYWORDS:
                     if kw in title:
                         found.append(True)
-                        return False
+                        break
             return True
         found = []
         win32gui.EnumWindows(enum_callback, None)
