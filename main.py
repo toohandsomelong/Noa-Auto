@@ -4,7 +4,8 @@ from game_launcher import GameLauncher
 from focus_watcher import FocusWatcher
 from routine import build_team_trials_routine
 from screen_bot import ScreenBot, Validator
-from ui import App
+from bot_controller import BotController
+from server import run_server
 
 
 def build_screen_bot(logger, state_manager, focus_watcher):
@@ -47,8 +48,8 @@ def main():
     focus_watcher = FocusWatcher()
     screen_bot = build_screen_bot(logger, state_manager, focus_watcher)
 
-    app = App(logger, state_manager, game_launcher, focus_watcher, screen_bot)
-    app.run()
+    controller = BotController(logger, state_manager, game_launcher, focus_watcher, screen_bot)
+    run_server(controller)
 
 
 if __name__ == "__main__":
