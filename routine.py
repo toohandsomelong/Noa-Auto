@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import math
 import os
-import random
 import time
 from typing import Any, Callable
 
@@ -14,39 +12,6 @@ from screen_bot import MatchResult, _load_template, _match
 WAIT = -1
 DONE = -2
 RECOVER = -3
-
-
-# def _human_move_to(target: tuple[int, int], duration: float = 0.2) -> None:
-#     try:
-#         sx, sy = pyautogui.position()
-#         ex, ey = target
-#         dx, dy = ex - sx, ey - sy
-#         dist = math.hypot(dx, dy)
-#         if dist < 10:
-#             pyautogui.moveTo(ex, ey, duration=duration * 0.3)
-#             return
-#         ratio = random.uniform(0.1, 0.3)
-#         cx = (sx + ex) / 2 + (-dy / max(dist, 1)) * ratio * dist * 0.15
-#         cy = (sy + ey) / 2 + (dx / max(dist, 1)) * ratio * dist * 0.15
-#         n = 8
-#         for i in range(1, n + 1):
-#             t = i / n
-#             tweened = pyautogui.easeInOutQuad(t)
-#             x = (1 - tweened) ** 2 * sx + 2 * (1 - tweened) * tweened * cx + tweened ** 2 * ex
-#             y = (1 - tweened) ** 2 * sy + 2 * (1 - tweened) * tweened * cy + tweened ** 2 * ey
-#             pyautogui.moveTo(x, y, duration=duration / n)
-#     except Exception:
-#         pass
-
-
-# def _human_click(point: tuple[int, int]) -> None:
-#     _human_move_to(point)
-#     pyautogui.click()
-
-
-# def _human_right_click(point: tuple[int, int]) -> None:
-#     _human_move_to(point)
-#     pyautogui.rightClick()
 
 
 def match_template(
@@ -125,198 +90,249 @@ class Step:
         return WAIT
 
 
-class AdvanceStep(Step):
-    """No-op step that immediately succeeds. Used as an ``if_found`` action when
-    the parent should advance without performing any click."""
-
-    def __init__(self, label: str | None = None) -> None:
-        self.label = label
-
-    def tick(self, screenshot: Any) -> int:
-        if self.logger is not None:
-            self.logger.info(f"{self.label or 'advance'}: satisfied immediately")
-        return DONE
-
-    def reset(self) -> None:
-        pass
-
-
-class ClickStep(Step):
-    """Match a primary template, act on it, confirm via its disappearance, then advance.
-
-    Composable mechanisms (each accepts a Step, so behavior lives in the sub-step):
-
-      * ``if_found`` — a priority Step that preempts the main click. Each tick the
-        parent runs the sub-step first; when it returns ``DONE`` the parent fires
-        ``on_if_found`` and jumps to ``goto_step_if_found`` (or ``index + 1``).
-      * ``blockers`` — Steps to dismiss before attempting the primary click. Each
-        tick, every blocker is run; a blocker returning ``WAIT`` pauses the parent,
-        ``RECOVER`` aborts, and any other result (blocker cleared) lets the parent
-        fall through to the primary click this cycle.
-      * ``alt_chain`` — a fallback Step sequence used only while the primary has
-        never matched. Items run in order; when the final item clears, the chain
-        resets and the parent waits for the primary next cycle.
-      * ``goto_step_not_found`` — if set, never-clicked-and-no-match branches immediately
-        instead of waiting out ``stuck_timeout``.
-      * ``offset_below`` / ``offset_x`` / ``right_click`` — main click geometry.
-      * ``on_click`` / ``on_if_found`` — side-effect callbacks.
-      * ``ready_delay`` — grace period after (re)entry before any action.
-    """
-
+class ClickRule:
     def __init__(
         self,
         template: str,
         *,
+        action: str = "click",
         offset_x: int = 0,
         offset_below: int = 0,
-        right_click: bool = False,
-        on_click: Callable[[], None] | None = None,
-        goto_step_not_found: int | None = None,
-        if_found: Step | None = None,
-        on_if_found: Callable[[], None] | None = None,
-        goto_step_if_found: int | None = None,
-        blockers: list[Step] | None = None,
-        alt_chain: list[Step] | None = None,
-        ready_delay: float = 0.0,
-        threshold: float = 0.85,
-        grayscale: bool = True,
+        on_match: Callable[[], None] | None = None,
+        on_confirm: Callable[[], None] | None = None,
+        goto: int | None = None,
+        stay_on_confirm: bool = False,
+        threshold: float | None = None,
+        grayscale: bool | None = None,
         label: str | None = None,
     ) -> None:
         self.template = template
+        self.action = action
         self.offset_x = offset_x
         self.offset_below = offset_below
-        self.right_click = right_click
-        self.on_click = on_click
-        self.goto_step_not_found = goto_step_not_found
-        self.if_found = if_found
-        self.on_if_found = on_if_found
-        self.goto_step_if_found = goto_step_if_found
-        self.blockers = list(blockers) if blockers else []
-        self.alt_chain = list(alt_chain) if alt_chain else []
-        self.ready_delay = ready_delay
+        self.on_match = on_match
+        self.on_confirm = on_confirm
+        self.goto = goto
+        self.stay_on_confirm = stay_on_confirm
         self.threshold = threshold
         self.grayscale = grayscale
         self.label = label or os.path.basename(template)
 
         self.clicked = False
         self.click_count = 0
-        self.seek_start_time = 0.0
-
-        self.alt_idx = 0
-        self._ready_until = 0.0
 
     def reset(self) -> None:
-        self.reset_click_state()
-        if self.if_found is not None:
-            self.if_found.reset()
-        for b in self.blockers:
-            b.reset()
-        for a in self.alt_chain:
-            a.reset()
-        self.alt_idx = 0
-        self._ready_until = time.time() + self.ready_delay
+        self.clicked = False
+        self.click_count = 0
+
+
+class ClickStep(Step):
+    """Step driven by an ordered list of ClickRules.  Each tick, rules are tested in
+    order; the first matching rule applies.  If no rule matches, fall-through
+    handles alt-chain, goto_step_not_found, or stuck_timeout.
+
+    Replaces all former click-variant classes through composition-free fall-through:
+
+      * ``stay_on_confirm=True`` → a blocker rule (right-click & dismiss, stay on step).
+      * ``action="advance"`` → match the template and advance immediately (no click).
+      * ``goto_step_not_found`` → branch index when no rule has ever matched.
+      * ``alt_chain`` → sequential fallback clicks run only while no non-stay rule
+        has been matched (faithful to the original PopupGuardedClickStep alt-chain).
+      * ``ready_delay`` — grace period after (re)entry before any action.
+    """
+
+    def __init__(
+        self,
+        rules: list[ClickRule],
+        *,
+        alt_chain: list[str] | None = None,
+        goto_step_not_found: int | None = None,
+        ready_delay: float = 0.0,
+        threshold: float = 0.85,
+        grayscale: bool = True,
+        label: str | None = None,
+    ) -> None:
+        self._rules = list(rules)
+        self._alt_chain = list(alt_chain) if alt_chain else []
+        self._goto_step_not_found = goto_step_not_found
+        self._ready_delay = ready_delay
+        self.threshold = threshold
+        self.grayscale = grayscale
+        self.label = label or "step"
+
+        self._ready_until = 0.0
+        self._alt_idx = 0
+        self._alt_clicked = False
+        self._alt_click_count = 0
+        self._alt_seek_start = 0.0
+        self._alt_active = False
+        self._main_engaged = False
+
+    def reset(self) -> None:
+        super().reset()
+        for rule in self._rules:
+            rule.reset()
+        self._alt_idx = 0
+        self._alt_clicked = False
+        self._alt_click_count = 0
+        self._alt_seek_start = 0.0
+        self._alt_active = False
+        self._main_engaged = False
+        self._ready_until = time.time() + self._ready_delay
 
     def tick(self, screenshot: Any) -> int:
         if time.time() < self._ready_until:
             return WAIT
 
-        if self.if_found is not None:
-            r = self.if_found.tick(screenshot)
-            if r == WAIT:
-                return WAIT
-            if r == RECOVER:
-                return RECOVER
-            # DONE or any int: if_found satisfied.
-            self._fire_on_if_found()
-            return self.goto_step_if_found if self.goto_step_if_found is not None else self.index + 1
+        for rule in self._rules:
+            result = self._apply(rule, screenshot)
+            if result is not None:
+                return result
 
-        if self.blockers:
-            for b in self.blockers:
-                r = b.tick(screenshot)
-                if r == WAIT:
-                    return WAIT
-                if r == RECOVER:
-                    return RECOVER
-                # any other result: blocker cleared this cycle, fall through.
+        if not self._main_engaged and self._alt_chain:
+            result = self._tick_alt_chain(screenshot)
+            if result is not None:
+                return result
 
-        m = self.match(screenshot, self.template)
-        if m is not None:
-            self.alt_idx = 0
-            for a in self.alt_chain:
-                a.reset()
-            if self.click_count < self.max_click_retries:
-                time.sleep(self.pre_click_delay)
-                target = self._target_point(m)
-                self.click(target, right=self.right_click)
-                self.click_count += 1
-                self.clicked = True
-                self.seek_start_time = 0.0
-                if self.logger is not None:
-                    btn = "Right-clicked" if self.right_click else "Clicked"
-                    where = f" below {self.label}" if self.offset_below else ""
-                    self.logger.info(f"{btn}{where} {self.label} ({self.click_count}) at {target}")
-                if self.on_click is not None:
-                    try:
-                        self.on_click()
-                    except Exception as e:
-                        if self.logger is not None:
-                            self.logger.error(f"on_click failed for {self.label}: {e}")
-                return WAIT
-            if self.logger is not None:
-                self.logger.warning(
-                    f"Step {self.label} retried {self.click_count}x without transition"
-                )
-            return RECOVER
-
-        if not self.clicked and self.alt_chain:
-            r = self._tick_alt_chain(screenshot)
-            if r is not None:
-                return r
-
-        if self.clicked:
+        if self._main_engaged:
             return self.index + 1
 
-        if self.goto_step_not_found is not None:
-            return self.goto_step_not_found
+        if self._goto_step_not_found is not None:
+            return self._goto_step_not_found
 
         return self.stuck_or_wait()
 
-    def _target_point(self, m: MatchResult) -> tuple[int, int]:
-        x = m.location[0] + m.size[0] // 2 + self.offset_x
-        if self.offset_below:
-            y = m.location[1] + m.size[1] + self.offset_below
+    def _apply(self, rule: ClickRule, screenshot: Any) -> int | None:
+        thresh = rule.threshold if rule.threshold is not None else self.threshold
+        gs = rule.grayscale if rule.grayscale is not None else self.grayscale
+        m = match_template(screenshot, rule.template, threshold=thresh, grayscale=gs)
+        if m is not None:
+            if rule.action == "advance":
+                lbl = rule.label
+                if self.logger is not None:
+                    self.logger.info(f"{self.label}: {lbl} already satisfied, advancing")
+                self._fire(rule.on_match, "on_match", lbl)
+                return rule.goto if rule.goto is not None else self.index + 1
+
+            if rule.click_count < self.max_click_retries:
+                time.sleep(self.pre_click_delay)
+                target = self._target_point(m, rule)
+                right = rule.action == "right_click"
+                do_click(target, right=right, label=rule.label, logger=self.logger)
+                rule.click_count += 1
+                rule.clicked = True
+                self.seek_start_time = 0.0
+                if not rule.stay_on_confirm:
+                    self._main_engaged = True
+                if self.logger is not None:
+                    btn = "Right-clicked" if right else "Clicked"
+                    self.logger.info(f"{btn} {rule.label} ({rule.click_count}) at {target}")
+                self._fire(rule.on_match, "on_match", rule.label)
+                return WAIT
+
+            if self.logger is not None:
+                self.logger.warning(
+                    f"Rule {rule.label} retried {rule.click_count}x without transition"
+                )
+            return RECOVER
+
+        if rule.clicked:
+            if rule.stay_on_confirm:
+                rule.reset()
+                if self.logger is not None:
+                    self.logger.info(f"Blocker {rule.label} dismissed")
+                return None
+
+            self._fire(rule.on_confirm, "on_confirm", rule.label)
+            return rule.goto if rule.goto is not None else self.index + 1
+
+        return None
+
+    @staticmethod
+    def _fire(cb: Callable[[], None] | None, name: str, label: str) -> None:
+        if cb is None:
+            return
+        try:
+            cb()
+        except Exception:
+            pass
+
+    @staticmethod
+    def _target_point(m: MatchResult, rule: ClickRule) -> tuple[int, int]:
+        x = m.location[0] + m.size[0] // 2 + rule.offset_x
+        if rule.offset_below:
+            y = m.location[1] + m.size[1] + rule.offset_below
         else:
             y = m.location[1] + m.size[1] // 2
         return (x, y)
 
-    def _fire_on_if_found(self) -> None:
-        if self.on_if_found is not None:
-            try:
-                self.on_if_found()
-            except Exception as e:
-                if self.logger is not None:
-                    self.logger.error(f"on_if_found failed for {self.label}: {e}")
-
     def _tick_alt_chain(self, screenshot: Any) -> int | None:
-        if self.alt_idx >= len(self.alt_chain):
-            return None
-        cur = self.alt_chain[self.alt_idx]
-        r = cur.tick(screenshot)
-        if r == WAIT:
+        if self._alt_active:
+            if self._alt_idx >= len(self._alt_chain):
+                return None
+            cur = self._alt_chain[self._alt_idx]
+            m = self.match(screenshot, cur)
+            if m is not None:
+                if self._alt_click_count < self.max_click_retries:
+                    time.sleep(self.pre_click_delay)
+                    self.click(m.center)
+                    self._alt_click_count += 1
+                    self._alt_clicked = True
+                    self._alt_seek_start = 0.0
+                    if self.logger is not None:
+                        self.logger.info(
+                            f"Clicked alt {os.path.basename(cur)} "
+                            f"({self._alt_idx}/{len(self._alt_chain)} "
+                            f"click {self._alt_click_count})"
+                        )
+                    return WAIT
+                if self.logger is not None:
+                    self.logger.warning(
+                        f"Alt {os.path.basename(cur)} retried {self._alt_click_count}x"
+                    )
+                return RECOVER
+
+            if self._alt_clicked:
+                self._alt_idx += 1
+                if self._alt_idx >= len(self._alt_chain):
+                    self._alt_idx = 0
+                    self._alt_active = False
+                    self._alt_clicked = False
+                    self._alt_click_count = 0
+                    self._alt_seek_start = 0.0
+                    if self.logger is not None:
+                        self.logger.info("Alt chain complete")
+                    return None
+                self._alt_clicked = False
+                self._alt_click_count = 0
+                self._alt_seek_start = 0.0
+                return WAIT
+
+            if self._alt_seek_start == 0.0:
+                self._alt_seek_start = time.time()
+            elif time.time() - self._alt_seek_start > self.stuck_timeout:
+                if self.logger is not None:
+                    self.logger.warning(
+                        f"Alt {os.path.basename(cur)} not found for {self.stuck_timeout}s"
+                    )
+                return RECOVER
             return WAIT
-        if r == RECOVER:
-            return RECOVER
-        # DONE or int: this chain item cleared; advance chain.
-        self.alt_idx += 1
-        if self.alt_idx >= len(self.alt_chain):
-            self.alt_idx = 0
-            for a in self.alt_chain:
-                a.reset()
+
+        if not self._alt_chain:
+            return None
+        m = self.match(screenshot, self._alt_chain[0])
+        if m is not None:
+            self._alt_active = True
+            time.sleep(self.pre_click_delay)
+            self.click(m.center)
+            self._alt_click_count = 1
+            self._alt_clicked = True
             if self.logger is not None:
-                self.logger.info("Alt chain complete")
-        else:
-            cur.reset()
-        return WAIT
+                self.logger.info(
+                    f"Started alt chain at {os.path.basename(self._alt_chain[0])} (click 1)"
+                )
+            return WAIT
+        return None
 
 
 class BranchStep(Step):
@@ -365,27 +381,6 @@ class EndStep(Step):
         return DONE
 
 
-def _configure_substeps(
-    step: Step,
-    logger: Any,
-    pre_click_delay: float,
-    max_click_retries: int,
-    stuck_timeout: float,
-) -> None:
-    step.logger = logger
-    step.pre_click_delay = pre_click_delay
-    step.max_click_retries = max_click_retries
-    step.stuck_timeout = stuck_timeout
-    if isinstance(step, ClickStep):
-        subs: list[Step] = []
-        if step.if_found is not None:
-            subs.append(step.if_found)
-        subs.extend(step.blockers)
-        subs.extend(step.alt_chain)
-        for sub in subs:
-            _configure_substeps(sub, logger, pre_click_delay, max_click_retries, stuck_timeout)
-
-
 class Routine:
     def __init__(
         self,
@@ -403,7 +398,10 @@ class Routine:
 
         for i, step in enumerate(steps):
             step.index = i
-            _configure_substeps(step, logger, pre_click_delay, max_click_retries, stuck_timeout)
+            step.logger = logger
+            step.pre_click_delay = pre_click_delay
+            step.max_click_retries = max_click_retries
+            step.stuck_timeout = stuck_timeout
 
         self._index = 0
         self._reset_on_enter(0)
@@ -462,50 +460,58 @@ def build_team_trials_routine(
     home_index = 12
 
     steps: list[Step] = [
-        ClickStep("templates/racemenu/teamtrials.png"),
-        ClickStep("templates/racemenu/teamtrials/1.png"),
+        ClickStep([ClickRule("templates/racemenu/teamtrials.png")]),
+        ClickStep([ClickRule("templates/racemenu/teamtrials/1.png")]),
         ClickStep(
-            "templates/racemenu/teamtrials/selectopponent.png",
-            offset_below=50,
+            [
+                ClickRule(
+                    "templates/racemenu/teamtrials/end.png",
+                    action="right_click",
+                    on_confirm=on_done,
+                    goto=home_index,
+                ),
+                ClickRule(
+                    "templates/racemenu/teamtrials/selectopponent.png",
+                    offset_below=50,
+                ),
+            ],
             ready_delay=2.0,
-            if_found=ClickStep(
-                "templates/racemenu/teamtrials/end.png",
-                right_click=True,
-                on_click=on_done,
-            ),
-            goto_step_if_found=home_index,
         ),
-        ClickStep("templates/racemenu/teamtrials/2-6.png"),
-        ClickStep("templates/racemenu/teamtrials/3.png"),
+        ClickStep([ClickRule("templates/racemenu/teamtrials/2-6.png")]),
+        ClickStep([ClickRule("templates/racemenu/teamtrials/3.png")]),
         ClickStep(
-            "templates/racemenu/teamtrials/quickNo.png",
-            if_found=AdvanceStep(),
+            [
+                ClickRule(
+                    "templates/racemenu/teamtrials/quickYes.png",
+                    action="advance",
+                ),
+                ClickRule("templates/racemenu/teamtrials/quickNo.png"),
+            ],
         ),
-        ClickStep("templates/racemenu/teamtrials/4.png"),
-        ClickStep("templates/racemenu/teamtrials/5.png"),
-        ClickStep("templates/racemenu/teamtrials/2-6.png"),
+        ClickStep([ClickRule("templates/racemenu/teamtrials/4.png")]),
+        ClickStep([ClickRule("templates/racemenu/teamtrials/5.png")]),
+        ClickStep([ClickRule("templates/racemenu/teamtrials/2-6.png")]),
         ClickStep(
-            "templates/racemenu/teamtrials/7.png",
-            blockers=[
-                ClickStep(
+            [
+                ClickRule(
                     "templates/racemenu/teamtrials/shop.png",
-                    right_click=True,
-                )
+                    action="right_click",
+                    stay_on_confirm=True,
+                ),
+                ClickRule("templates/racemenu/teamtrials/7.png"),
             ],
             alt_chain=[
-                ClickStep("templates/racemenu/teamtrials/smallnext.png"),
-                ClickStep("templates/racemenu/teamtrials/2-6.png"),
+                "templates/racemenu/teamtrials/smallnext.png",
+                "templates/racemenu/teamtrials/2-6.png",
             ],
         ),
         ClickStep(
-            "templates/racemenu/teamtrials/end.png",
-            right_click=True,
+            [ClickRule("templates/racemenu/teamtrials/end.png", action="right_click")],
             goto_step_not_found=select_opponent_index,
         ),
-        ClickStep("templates/racemenu/teamtrials/smallnext.png"),
+        ClickStep([ClickRule("templates/racemenu/teamtrials/smallnext.png")]),
         ClickStep(
-            "templates/main/home.png",
-            on_click=on_done,
+            [ClickRule("templates/main/home.png", on_match=on_done)],
         ),
         EndStep(on_done=on_done),
     ]
