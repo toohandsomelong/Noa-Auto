@@ -18,10 +18,10 @@ import win32api
 import win32event
 import winerror
 
-from bot_controller import BotController
+from web.bot_controller import BotController
 
 MUTEX_NAME = "Global\\NoaAutoSingleInstance"
-STATIC_DIR = Path(__file__).parent / "static"
+STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 PREFERRED_PORTS = [6969, 6767, 6967]
 
 _controller: BotController | None = None
@@ -101,13 +101,19 @@ def create_app(controller: BotController) -> FastAPI:
     @app.put("/api/config")
     async def set_config(body: dict) -> JSONResponse:
         path = body.get("game_path", "")
-        controller.set_config(path)
+        routines = body.get("routines")
+        repeat = body.get("repeat")
+        controller.set_config(game_path=path, routines=routines, repeat=repeat)
         return JSONResponse(content={"ok": True})
 
     @app.get("/api/browse")
     async def browse_path(path: str = "") -> JSONResponse:
         result = controller.browse(path)
         return JSONResponse(content=result)
+
+    @app.get("/api/routines")
+    async def list_routines() -> JSONResponse:
+        return JSONResponse(content=controller.get_routines())
 
     @app.websocket("/ws")
     async def ws_endpoint(ws: WebSocket) -> None:

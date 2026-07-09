@@ -7,12 +7,14 @@ import subprocess
 import threading
 import time
 from collections.abc import Callable
+from typing import Any
 
-from focus_watcher import FocusWatcher
-from game_launcher import GameLauncher
-from logger import Logger
-from screen_bot import ScreenBot
-from state_manager import BotState, StateManager
+from core.focus_watcher import FocusWatcher
+from core.game_launcher import GameLauncher
+from core.logger import Logger
+from core.screen_bot import ScreenBot
+from core.state_manager import BotState, StateManager
+from routines import ROUTINES
 
 CONFIG_FILE = "config.json"
 
@@ -39,6 +41,12 @@ class BotController:
 
         self._flush_stop = threading.Event()
         self._flush_thread: threading.Thread | None = None
+
+        self._chain: list[str] = []
+        self._chain_idx: int = 0
+        self._repeat: int = 1
+        self._play_count: int = 0
+        self._chain_lock = threading.Lock()
 
         self.logger.on_log(self._on_log_line)
         self.state_manager.on_state_change(self._on_state_change)
@@ -83,9 +91,10 @@ class BotController:
                 pass
 
     def get_state(self) -> dict:
+        config = self.get_config()
         return {
             "state": self.state_manager.state.value,
-            "game_path": self._load_config_path(),
+            "game_path": config["game_path"],
         }
 
     def start(self, path: str) -> None:
@@ -100,7 +109,7 @@ class BotController:
             self.logger.error(f"Path not found: {path}")
             return
 
-        self._save_config(path)
+        self._save_config({"game_path": path.strip()})
 
         existing_hwnd = self.game_launcher.find_existing_window()
         if existing_hwnd is not None:
@@ -138,7 +147,9 @@ class BotController:
 
         self.focus_watcher.start()
         if self.screen_bot is not None:
+            self.screen_bot.on_routine_done = self._on_routine_done
             self.screen_bot.start()
+            self._kickoff_chain()
         self._monitor_process()
 
     def _launch(self, path: str) -> None:
@@ -177,8 +188,75 @@ class BotController:
 
         self.focus_watcher.start()
         if self.screen_bot is not None:
+            self.screen_bot.on_routine_done = self._on_routine_done
             self.screen_bot.start()
+            self._kickoff_chain()
         self._monitor_process()
+
+    def _kickoff_chain(self) -> None:
+        config = self.get_config()
+        routines = config.get("routines", [])
+        self._repeat = max(1, int(config.get("repeat", 1)))
+        self._chain = self._validate_routines(routines)
+        self._chain_idx = 0
+        self._play_count = 0
+
+        if not self._chain:
+            self.logger.warning("No routines configured")
+            return
+
+        self._build_and_start(self._chain[0])
+
+    def _validate_routines(self, routines: Any) -> list[str]:
+        if routines is None:
+            return []
+        if isinstance(routines, str):
+            routines = [routines]
+        if not isinstance(routines, list):
+            self.logger.error(f"Invalid routines config: {routines!r}")
+            return []
+
+        valid: list[str] = []
+        for name in routines:
+            if name in ROUTINES:
+                valid.append(name)
+            else:
+                self.logger.error(f"Unknown routine: {name}")
+        return valid
+
+    def _build_and_start(self, name: str) -> None:
+        builder = ROUTINES.get(name)
+        if builder is None:
+            self.logger.error(f"Cannot build unknown routine: {name}")
+            return
+        try:
+            routine = builder(self.logger)
+        except Exception as e:
+            self.logger.error(f"Failed to build routine '{name}': {e}")
+            return
+
+        if self.screen_bot is None:
+            return
+        self.screen_bot.start_routine(routine)
+        self.logger.info(f"Routine '{name}' started")
+
+    def _on_routine_done(self, name: str) -> None:
+        with self._chain_lock:
+            self._chain_idx += 1
+
+            if self._chain_idx < len(self._chain):
+                next_name = self._chain[self._chain_idx]
+                self._build_and_start(next_name)
+                return
+
+            self._play_count += 1
+            if self._play_count < self._repeat:
+                self._chain_idx = 0
+                self._build_and_start(self._chain[0])
+                return
+
+        self.logger.state("Chain complete")
+        threading.Thread(target=self._cleanup, daemon=True).start()
 
     def _monitor_process(self) -> None:
         def monitor() -> None:
@@ -212,26 +290,70 @@ class BotController:
         self._hwnd = None
         self.focus_watcher.hwnd = None
 
-    def _load_config_path(self) -> str:
-        try:
-            with open(CONFIG_FILE, "r", encoding="utf-8") as f:
-                config = json.load(f)
-        except (FileNotFoundError, json.JSONDecodeError):
-            return ""
-        return config.get("game_path", "")
-
     def get_config(self) -> dict:
-        return {"game_path": self._load_config_path()}
+        config = self._load_config()
+        routines = config.get("routines")
+        if routines is None:
+            legacy = config.get("routine", "team_trials")
+            routines = [legacy] if legacy else []
+        repeat = config.get("repeat", 1)
+        try:
+            repeat = int(repeat)
+        except (TypeError, ValueError):
+            repeat = 1
+        if repeat < 1:
+            repeat = 1
+        return {
+            "game_path": config.get("game_path", ""),
+            "routines": routines,
+            "repeat": repeat,
+        }
 
-    def set_config(self, game_path: str) -> None:
-        self._save_config(game_path)
+    def set_config(
+        self,
+        game_path: str = "",
+        routines: Any = None,
+        repeat: Any = None,
+    ) -> None:
+        existing = self._load_config()
+        if game_path:
+            existing["game_path"] = game_path.strip()
+        if routines is not None:
+            if isinstance(routines, str):
+                routines = [routines]
+            if isinstance(routines, list):
+                existing["routines"] = routines
+        if repeat is not None:
+            try:
+                repeat_value = int(repeat)
+            except (TypeError, ValueError):
+                repeat_value = 0
+            if repeat_value > 0:
+                existing["repeat"] = repeat_value
+        self._save_config(existing)
 
-    def _save_config(self, game_path: str) -> None:
+    def get_routines(self) -> dict:
+        config = self.get_config()
+        return {
+            "routines": list(ROUTINES.keys()),
+            "current": config["routines"][0] if config["routines"] else "",
+            "chain": config["routines"],
+            "repeat": config["repeat"],
+        }
+
+    def _save_config(self, config: dict) -> None:
         try:
             with open(CONFIG_FILE, "w", encoding="utf-8") as f:
-                json.dump({"game_path": game_path.strip()}, f)
+                json.dump(config, f)
         except Exception as e:
             self.logger.error(f"Failed to save config: {e}")
+
+    def _load_config(self) -> dict:
+        try:
+            with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError):
+            return {}
 
     @staticmethod
     def browse(path: str) -> dict:

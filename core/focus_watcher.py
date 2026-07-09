@@ -3,8 +3,7 @@ import threading
 
 import win32gui
 
-GAME_KEYWORDS = ["ウマ娘", "Uma Musume", "Umamusume", "umamusume"]
-
+from core.constants import GAME_KEYWORDS
 
 class FocusWatcher:
     def __init__(self, check_interval=0.5):
@@ -33,9 +32,10 @@ class FocusWatcher:
         for kw in GAME_KEYWORDS:
             if kw in fg_title:
                 return True
-        if self._hwnd and win32gui.IsWindow(self._hwnd):
-            if fg == self._hwnd or win32gui.IsChild(self._hwnd, fg):
-                return True
+        if (self._hwnd
+            and win32gui.IsWindow(self._hwnd)
+            and (fg == self._hwnd or win32gui.IsChild(self._hwnd, fg))):
+            return True
         return False
 
     @property

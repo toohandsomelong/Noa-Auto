@@ -49,6 +49,71 @@ body {
     min-width: 80px;
 }
 
+.chain-section {
+    display: flex;
+    gap: 12px;
+}
+
+.chain-column {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.chain-column label {
+    font-weight: bold;
+}
+
+.chain-list {
+    background: #252526;
+    border: 1px solid #444;
+    min-height: 100px;
+    max-height: 160px;
+    overflow-y: auto;
+    padding: 4px;
+}
+
+.chain-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+    padding: 4px 6px;
+    font-size: 13px;
+}
+
+.chain-item:nth-child(odd) {
+    background: #2d2d2d;
+}
+
+.chain-item button {
+    padding: 2px 8px;
+    font-size: 12px;
+    min-width: 28px;
+}
+
+.chain-controls {
+    display: flex;
+    gap: 4px;
+}
+
+.repeat-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.repeat-row input[type="number"] {
+    background: #2d2d2d;
+    color: #d4d4d4;
+    border: 1px solid #555;
+    padding: 4px 8px;
+    font-family: inherit;
+    font-size: 13px;
+    width: 80px;
+}
+
 button {
     background: #3c3c3c;
     color: #d4d4d4;

@@ -5,6 +5,8 @@ import subprocess
 import win32gui
 import win32process
 
+from core.constants import GAME_KEYWORDS
+
 
 class GameLauncher:
     def __init__(self, logger):
@@ -32,14 +34,13 @@ class GameLauncher:
         return self._find_game_window(timeout=3)
 
     def _find_game_window(self, timeout=30):
-        keywords = ["ウマ娘", "Uma Musume", "Umamusume", "umamusume"]
         deadline = time.time() + timeout
         while time.time() < deadline:
             found = []
             def enum_callback(hwnd, _):
                 if win32gui.IsWindowVisible(hwnd):
                     title = win32gui.GetWindowText(hwnd)
-                    for kw in keywords:
+                    for kw in GAME_KEYWORDS:
                         if kw in title:
                             found.append((hwnd, title))
                             break

@@ -22,6 +22,22 @@
     <button id="stop-btn" class="btn-stop" disabled>&#9632; Stop</button>
   </div>
 
+  <div class="chain-section">
+    <div class="chain-column">
+      <label>Available Routines</label>
+      <div id="available-list" class="chain-list"></div>
+    </div>
+    <div class="chain-column">
+      <label>Active Chain</label>
+      <div id="chain-list" class="chain-list"></div>
+    </div>
+  </div>
+
+  <div class="repeat-row">
+    <label>Repeat:</label>
+    <input type="number" id="repeat-input" min="1" value="1">
+  </div>
+
   <div class="log-section">
     <label>Log</label>
     <pre id="log-console"></pre>
