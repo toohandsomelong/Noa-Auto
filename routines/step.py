@@ -7,13 +7,12 @@ from core.match_result import MatchResult
 
 from routines.base import WAIT, RECOVER, match_template, do_click
 
-
 class Step:
     index: int = 0
     logger: Any = None
-    pre_click_delay: float = 0.1
-    max_click_retries: int = 15
-    stuck_timeout: float = 15.0
+    delay: float = 0.0
+    max_step_retry: int | None = None
+    timeout: float | None = None
     threshold: float = 0.85
     grayscale: bool = True
     label: str | None = None
@@ -46,8 +45,9 @@ class Step:
         if self.seek_start_time == 0.0:
             self.seek_start_time = time.time()
             return WAIT
-        if time.time() - self.seek_start_time > self.stuck_timeout:
+        timeout = self.timeout
+        if timeout is not None and time.time() - self.seek_start_time > timeout:
             if self.logger is not None:
-                self.logger.warning(f"Step {lbl} not found for {self.stuck_timeout}s")
+                self.logger.warning(f"Step {lbl} not found for {timeout}s")
             return RECOVER
         return WAIT

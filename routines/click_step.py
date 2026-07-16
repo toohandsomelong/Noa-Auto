@@ -8,7 +8,8 @@ from core.match_result import MatchResult
 
 from routines.base import WAIT, RECOVER, match_template, do_click
 from routines.step import Step
-from routines.click_rule import ClickRule
+from routines.click_action import ClickAction
+from routines.click import Click
 
 
 class ClickStep(Step):
@@ -28,7 +29,7 @@ class ClickStep(Step):
 
     def __init__(
         self,
-        rules: list[ClickRule],
+        rules: list[Click],
         *,
         alt_chain: list[str] | None = None,
         goto_step_not_found: int | None = None,
@@ -87,47 +88,48 @@ class ClickStep(Step):
 
         return self.stuck_or_wait()
 
-    def _apply(self, rule: ClickRule, screenshot: Any) -> int | None:
-        thresh = rule.threshold if rule.threshold is not None else self.threshold
-        gs = rule.grayscale if rule.grayscale is not None else self.grayscale
-        m = match_template(screenshot, rule.template, threshold=thresh, grayscale=gs)
+    def _apply(self, click: Click, screenshot: Any) -> int | None:
+        thresh = click.threshold if click.threshold is not None else self.threshold
+        gs = click.grayscale if click.grayscale is not None else self.grayscale
+        m = match_template(screenshot, click.template, threshold=thresh, grayscale=gs)
         log = self.logger
 
         if m is None:
-            if rule.clicked:
-                if rule.stay_on_confirm:
-                    rule.reset()
+            if click.clicked:
+                if click.stay_on_confirm:
+                    click.reset()
                     if log:
-                        log.info(f"Blocker {rule.label} dismissed")
+                        log.info(f"Blocker {click.label} dismissed")
                     return None
-                self._fire(rule.on_confirm, "on_confirm", rule.label)
-                return rule.goto if rule.goto is not None else self.index + 1
+                self._fire(click.on_confirm, "on_confirm", click.label)
+                return click.goto if click.goto is not None else self.index + 1
             return None
 
-        if rule.action == "advance":
+        if click.action == ClickAction.ADVANCE:
             if log:
-                log.info(f"{self.label}: {rule.label} already satisfied, advancing")
-            self._fire(rule.on_match, "on_match", rule.label)
-            return rule.goto if rule.goto is not None else self.index + 1
+                log.info(f"{self.label}: {click.label} already satisfied, advancing")
+            self._fire(click.on_match, "on_match", click.label)
+            return click.goto if click.goto is not None else self.index + 1
 
-        if rule.click_count >= self.max_click_retries:
+        max_step_retry = self.max_step_retry
+        if max_step_retry is not None and click.click_count >= max_step_retry:
             if log:
-                log.warning(f"Rule {rule.label} retried {rule.click_count}x without transition")
+                log.warning(f"Rule {click.label} retried {click.click_count}x without transition")
             return RECOVER
 
-        time.sleep(self.pre_click_delay)
-        target = self._target_point(m, rule)
-        right = rule.action == "right_click"
-        do_click(target, right=right, label=rule.label, logger=self.logger)
-        rule.click_count += 1
-        rule.clicked = True
+        time.sleep(self.delay)
+        target = self._target_point(m, click)
+        right = click.action == ClickAction.RIGHT_CLICK
+        do_click(target, right=right, label=click.label, logger=self.logger)
+        click.click_count += 1
+        click.clicked = True
         self.seek_start_time = 0.0
-        if not rule.stay_on_confirm:
+        if not click.stay_on_confirm:
             self._main_engaged = True
         if log:
             btn = "Right-clicked" if right else "Clicked"
-            log.info(f"{btn} {rule.label} ({rule.click_count}) at {target}")
-        self._fire(rule.on_match, "on_match", rule.label)
+            log.info(f"{btn} {click.label} ({click.click_count}) at {target}")
+        self._fire(click.on_match, "on_match", click.label)
         return WAIT
 
     @staticmethod
@@ -140,7 +142,7 @@ class ClickStep(Step):
             pass
 
     @staticmethod
-    def _target_point(m: MatchResult, rule: ClickRule) -> tuple[int, int]:
+    def _target_point(m: MatchResult, rule: Click) -> tuple[int, int]:
         x = m.location[0] + m.size[0] // 2 + rule.offset_x
         if rule.offset_y:
             y = m.location[1] + m.size[1] + rule.offset_y
@@ -158,7 +160,7 @@ class ClickStep(Step):
             if m is None:
                 return None
             self._alt_active = True
-            time.sleep(self.pre_click_delay)
+            time.sleep(self.delay)
             self.click(m.center)
             self._alt_click_count = 1
             self._alt_clicked = True
@@ -173,11 +175,12 @@ class ClickStep(Step):
         m = self.match(screenshot, cur)
 
         if m is not None:
-            if self._alt_click_count >= self.max_click_retries:
+            max_step_retry = self.max_step_retry
+            if max_step_retry is not None and self._alt_click_count >= max_step_retry:
                 if log:
                     log.warning(f"Alt {os.path.basename(cur)} retried {self._alt_click_count}x")
                 return RECOVER
-            time.sleep(self.pre_click_delay)
+            time.sleep(self.delay)
             self.click(m.center)
             self._alt_click_count += 1
             self._alt_clicked = True
@@ -208,8 +211,10 @@ class ClickStep(Step):
 
         if self._alt_seek_start == 0.0:
             self._alt_seek_start = time.time()
-        elif time.time() - self._alt_seek_start > self.stuck_timeout:
-            if log:
-                log.warning(f"Alt {os.path.basename(cur)} not found for {self.stuck_timeout}s")
-            return RECOVER
+        else:
+            timeout = self.timeout
+            if timeout is not None and time.time() - self._alt_seek_start > timeout:
+                if log:
+                    log.warning(f"Alt {os.path.basename(cur)} not found for {timeout}s")
+                return RECOVER
         return WAIT

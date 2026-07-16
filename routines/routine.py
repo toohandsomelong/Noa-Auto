@@ -3,11 +3,8 @@ from __future__ import annotations
 import time
 from typing import Any
 
-import pyautogui
-
-from core.screen_bot import _load_template, _match
-
 from routines.base import WAIT, DONE, RECOVER
+from routines.config import RoutineConfig
 from routines.step import Step
 
 
@@ -17,24 +14,36 @@ class Routine:
         name: str,
         steps: list[Step],
         logger: Any,
-        pre_click_delay: float = 0.1,
-        max_click_retries: int = 5,
-        stuck_timeout: float = 15.0,
+        config: RoutineConfig,
+        recover_steps: list[Step] | None = None,
     ) -> None:
         self.name = name
         self.steps = steps
         self.logger = logger
+        self.config = config
         self.done = False
 
         for i, step in enumerate(steps):
             step.index = i
             step.logger = logger
-            step.pre_click_delay = pre_click_delay
-            step.max_click_retries = max_click_retries
-            step.stuck_timeout = stuck_timeout
+            step.delay = config.delay
+            step.max_step_retry = config.max_step_retry
+            step.timeout = config.timeout
+
+        self._recover_steps = recover_steps or []
+        for i, step in enumerate(self._recover_steps):
+            step.index = i
+            step.logger = logger
+            step.delay = config.delay
+            step.max_step_retry = config.max_step_retry
+            step.timeout = config.timeout
 
         self._index = 0
         self._reset_on_enter(0)
+
+        self._recover_count = 0
+        self._max_recover = config.max_recover
+        self._last_recover_index: int | None = None
 
     def _reset_on_enter(self, idx: int) -> None:
         if 0 <= idx < len(self.steps):
@@ -65,22 +74,29 @@ class Routine:
     def _advance_to(self, new_idx: int) -> None:
         if new_idx != self._index:
             self._reset_on_enter(new_idx)
+            if self._last_recover_index is None or new_idx > self._last_recover_index:
+                self._recover_count = 0
+                self._last_recover_index = None
         self._index = new_idx
 
     def _recover(self, screenshot: Any) -> None:
-        self._try_click_home(screenshot)
-        self.logger.state(f"Routine '{self.name}' aborted and restarted")
-        self.done = True
+        self._recover_count += 1
+        self._last_recover_index = self._index
 
-    def _try_click_home(self, screenshot: Any) -> None:
-        home_template = _load_template("templates/main/home.png", True)
-        if home_template is None:
+        if self._recover_count > self._max_recover:
+            self.logger.state(
+                f"Routine '{self.name}' aborted after {self._max_recover} recoveries"
+            )
+            self.done = True
             return
-        home_match = _match(screenshot, home_template, 0.85, True)
-        if home_match is None:
-            return
-        try:
-            pyautogui.click(home_match.center[0], home_match.center[1])
-            self.logger.info("Clicked home.png during routine recovery")
-        except Exception as e:
-            self.logger.error(f"Recovery home click failed: {e}")
+
+        for step in self._recover_steps:
+            step.reset()
+            step.tick(screenshot)
+
+        self._index = 0
+        self._reset_on_enter(0)
+        self.logger.state(
+            f"Routine '{self.name}' recovered "
+            f"({self._recover_count}/{self._max_recover}), restarting from step 0"
+        )

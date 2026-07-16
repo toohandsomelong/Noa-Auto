@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 import time
 import threading
@@ -15,37 +16,35 @@ import pyautogui
 from core.match_result import MatchResult
 from core.state_manager import BotState, StateManager
 
+logger = logging.getLogger(__name__)
 
 def _capture(sct: Any | None = None) -> Any | None:
     close_on_exit = sct is None
     sct = sct or mss.mss()
     try:
-        img = sct.grab(sct.monitors[0])
+        img = sct.grab(sct.monitors[0]) # type: ignore
         bgr = np.array(img)[:, :, :3][:, :, ::-1]
         return bgr
     finally:
         if close_on_exit:
-            sct.close()
+            sct.close() # type: ignore
 
 
 @lru_cache(maxsize=128)
 def _load_template(template_path: str, grayscale: bool) -> Any | None:
     full_path = os.path.abspath(template_path)
     if not os.path.exists(full_path):
+        logger.error(f"Template file not found: {full_path}")
         return None
     flags = cv2.IMREAD_GRAYSCALE if grayscale else cv2.IMREAD_COLOR
     template = cv2.imread(full_path, flags)
     if template is None:
+        logger.error(f"Failed to load template: {full_path}")
         return None
     return template
 
 
-def _match(
-    screenshot: Any,
-    template: Any,
-    threshold: float,
-    grayscale: bool,
-) -> MatchResult | None:
+def _match(screenshot: Any, template: Any, threshold: float, grayscale: bool) -> MatchResult | None:
     screen = screenshot
     if grayscale and len(screenshot.shape) == 3:
         screen = cv2.cvtColor(screenshot, cv2.COLOR_BGR2GRAY)
@@ -54,7 +53,7 @@ def _match(
     if max_val < threshold:
         return None
     h, w = template.shape[:2]
-    return MatchResult(location=max_loc, size=(w, h), confidence=max_val)
+    return MatchResult(location=max_loc, size=(w, h), confidence=max_val) # type: ignore
 
 
 class ScreenBot:

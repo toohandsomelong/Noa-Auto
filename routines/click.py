@@ -3,13 +3,15 @@ from __future__ import annotations
 import os
 from typing import Callable
 
+from routines.click_action import ClickAction
 
-class ClickRule:
+
+class Click:
     def __init__(
         self,
         template: str,
         *,
-        action: str = "click",
+        action: ClickAction = ClickAction.CLICK,
         offset_x: int = 0,
         offset_y: int = 0,
         on_match: Callable[[], None] | None = None,

@@ -2,62 +2,65 @@ from __future__ import annotations
 
 from typing import Any
 
-from routines.click_rule import ClickRule
+from routines.click_action import ClickAction
+from routines.click import Click
 from routines.click_step import ClickStep
-from routines.end_step import EndStep
+from routines.config import RoutineConfig
 from routines.routine import Routine
 from routines.step import Step
 
+
+CONFIG = RoutineConfig(delay=0.5, max_step_retry=15, timeout=15.0, max_recover=3)
 
 def build_team_trials_routine(logger: Any) -> Routine:
     select_opponent_index = 4
     home_index = 14
 
     steps: list[Step] = [
-        ClickStep([ClickRule("templates/main/raceMenuNoActive.png")]),
-        ClickStep([ClickRule("templates/main/raceMenuActive.png", action="advance")]),
-        ClickStep([ClickRule("templates/racemenu/teamtrials.png")]),
-        ClickStep([ClickRule("templates/racemenu/teamtrials/1.png")]),
+        ClickStep([Click("templates/main/raceMenuNoActive.png")]),
+        ClickStep([Click("templates/main/raceMenuActive.png", action=ClickAction.ADVANCE)]),
+        ClickStep([Click("templates/racemenu/teamtrials.png")]),
+        ClickStep([Click("templates/racemenu/teamtrials/1.png")]),
         ClickStep(
             [
-                ClickRule(
+                Click(
                     "templates/racemenu/teamtrials/end.png",
-                    action="right_click",
+                    action=ClickAction.RIGHT_CLICK,
                     goto=home_index,
                 ),
-                ClickRule(
+                Click(
                     "templates/racemenu/teamtrials/selectopponent.png",
                     offset_y=50,
                 ),
             ],
-            ready_delay=2.0,
+            ready_delay=3.0,
         ),
-        ClickStep([ClickRule("templates/racemenu/teamtrials/2-6.png")]),
-        ClickStep([ClickRule("templates/racemenu/teamtrials/3.png")]),
+        ClickStep([Click("templates/racemenu/teamtrials/next.png")]),
+        ClickStep([Click("templates/racemenu/teamtrials/3.png")]),
         ClickStep(
             [
-                ClickRule(
+                Click(
                     "templates/racemenu/teamtrials/quickYes.png",
-                    action="advance",
+                    action=ClickAction.ADVANCE,
                 ),
-                ClickRule("templates/racemenu/teamtrials/quickNo.png"),
+                Click("templates/racemenu/teamtrials/quickNo.png"),
             ],
         ),
-        ClickStep([ClickRule("templates/racemenu/teamtrials/4.png")]),
-        ClickStep([ClickRule("templates/racemenu/teamtrials/5.png")]),
-        ClickStep([ClickRule("templates/racemenu/teamtrials/2-6.png")]),
+        ClickStep([Click("templates/racemenu/teamtrials/4.png")]),
+        ClickStep([Click("templates/racemenu/teamtrials/5.png")]),
+        ClickStep([Click("templates/racemenu/teamtrials/2-6.png")]),
         ClickStep(
             [
-                ClickRule(
+                Click(
                     "templates/racemenu/teamtrials/highscore.png",
                     stay_on_confirm=True,
                 ),
-                ClickRule(
+                Click(
                     "templates/racemenu/teamtrials/shop.png",
-                    action="right_click",
+                    action=ClickAction.RIGHT_CLICK,
                     stay_on_confirm=True,
                 ),
-                ClickRule("templates/racemenu/teamtrials/7.png"),
+                Click("templates/racemenu/teamtrials/7.png"),
             ],
             alt_chain=[
                 "templates/racemenu/teamtrials/smallnext.png",
@@ -65,12 +68,15 @@ def build_team_trials_routine(logger: Any) -> Routine:
             ],
         ),
         ClickStep(
-            [ClickRule("templates/racemenu/teamtrials/end.png", action="right_click")],
+            [Click("templates/racemenu/teamtrials/end.png", action=ClickAction.RIGHT_CLICK)],
             goto_step_not_found=select_opponent_index,
         ),
-        ClickStep([ClickRule("templates/racemenu/teamtrials/smallnext.png")]),
-        ClickStep([ClickRule("templates/main/home.png")]),
-        EndStep(),
+        ClickStep([Click("templates/racemenu/teamtrials/smallnext.png")]),
+        ClickStep([Click("templates/main/home.png")]),
     ]
 
-    return Routine("team_trials", steps, logger)
+    recover_steps: list[Step] = [
+        ClickStep([Click("templates/main/home.png")]),
+    ]
+
+    return Routine("team_trials", steps, logger, config=CONFIG, recover_steps=recover_steps)
