@@ -18,6 +18,8 @@ import win32api
 import win32event
 import winerror
 
+from routines import ROUTINES, refresh_routines
+from routines.plan_loader import delete_plan, get_plan, save_plan
 from web.bot_controller import BotController
 
 MUTEX_NAME = "Global\\NoaAutoSingleInstance"
@@ -114,6 +116,39 @@ def create_app(controller: BotController) -> FastAPI:
     @app.get("/api/routines")
     async def list_routines() -> JSONResponse:
         return JSONResponse(content=controller.get_routines())
+
+    @app.get("/api/plan/{name}")
+    async def get_plan_data(name: str) -> JSONResponse:
+        try:
+            data = get_plan(name)
+        except Exception as e:
+            return JSONResponse(status_code=400, content={"error": str(e)})
+        if data is None:
+            return JSONResponse(status_code=404, content={"error": "Plan not found"})
+        return JSONResponse(content=data)
+
+    @app.post("/api/plan")
+    async def save_plan_data(body: dict) -> JSONResponse:
+        name = body.get("name", "")
+        try:
+            save_plan(name, body)
+            refresh_routines()
+        except Exception as e:
+            return JSONResponse(status_code=400, content={"error": str(e)})
+        return JSONResponse(
+            content={"ok": True, "name": name, "routines": list(ROUTINES.keys())}
+        )
+
+    @app.delete("/api/plan/{name}")
+    async def delete_plan_data(name: str) -> JSONResponse:
+        try:
+            deleted = delete_plan(name)
+        except Exception as e:
+            return JSONResponse(status_code=400, content={"error": str(e)})
+        if not deleted:
+            return JSONResponse(status_code=404, content={"error": "Plan not found"})
+        refresh_routines()
+        return JSONResponse(content={"ok": True, "routines": list(ROUTINES.keys())})
 
     @app.websocket("/ws")
     async def ws_endpoint(ws: WebSocket) -> None:

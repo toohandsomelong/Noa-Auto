@@ -9,7 +9,7 @@ from core.match_result import MatchResult
 from routines.base import WAIT, RECOVER, match_template, do_click
 from routines.step import Step
 from routines.click_action import ClickAction
-from routines.click import Click
+from routines.target import Target
 
 
 class ClickStep(Step):
@@ -29,7 +29,7 @@ class ClickStep(Step):
 
     def __init__(
         self,
-        rules: list[Click],
+        rules: list[Target],
         *,
         alt_chain: list[str] | None = None,
         goto_step_not_found: int | None = None,
@@ -88,48 +88,48 @@ class ClickStep(Step):
 
         return self.stuck_or_wait()
 
-    def _apply(self, click: Click, screenshot: Any) -> int | None:
-        thresh = click.threshold if click.threshold is not None else self.threshold
-        gs = click.grayscale if click.grayscale is not None else self.grayscale
-        m = match_template(screenshot, click.template, threshold=thresh, grayscale=gs)
+    def _apply(self, target: Target, screenshot: Any) -> int | None:
+        thresh = target.threshold if target.threshold is not None else self.threshold
+        gs = target.grayscale if target.grayscale is not None else self.grayscale
+        m = match_template(screenshot, target.template, threshold=thresh, grayscale=gs)
         log = self.logger
 
         if m is None:
-            if click.clicked:
-                if click.stay_on_confirm:
-                    click.reset()
+            if target.clicked:
+                if target.stay_on_confirm:
+                    target.reset()
                     if log:
-                        log.info(f"Blocker {click.label} dismissed")
+                        log.info(f"Blocker {target.label} dismissed")
                     return None
-                self._fire(click.on_confirm, "on_confirm", click.label)
-                return click.goto if click.goto is not None else self.index + 1
+                self._fire(target.on_confirm, "on_confirm", target.label)
+                return target.goto if target.goto is not None else self.index + 1
             return None
 
-        if click.action == ClickAction.ADVANCE:
+        if target.action == ClickAction.CONTINUE:
             if log:
-                log.info(f"{self.label}: {click.label} already satisfied, advancing")
-            self._fire(click.on_match, "on_match", click.label)
-            return click.goto if click.goto is not None else self.index + 1
+                log.info(f"{self.label}: {target.label} already satisfied, advancing")
+            self._fire(target.on_match, "on_match", target.label)
+            return target.goto if target.goto is not None else self.index + 1
 
         max_step_retry = self.max_step_retry
-        if max_step_retry is not None and click.click_count >= max_step_retry:
+        if max_step_retry is not None and target.click_count >= max_step_retry:
             if log:
-                log.warning(f"Rule {click.label} retried {click.click_count}x without transition")
+                log.warning(f"Target {target.label} retried {target.click_count}x without transition")
             return RECOVER
 
         time.sleep(self.delay)
-        target = self._target_point(m, click)
-        right = click.action == ClickAction.RIGHT_CLICK
-        do_click(target, right=right, label=click.label, logger=self.logger)
-        click.click_count += 1
-        click.clicked = True
+        point = self._target_point(m, target)
+        right = target.action == ClickAction.RIGHT_CLICK
+        do_click(point, right=right, label=target.label, logger=self.logger)
+        target.click_count += 1
+        target.clicked = True
         self.seek_start_time = 0.0
-        if not click.stay_on_confirm:
+        if not target.stay_on_confirm:
             self._main_engaged = True
         if log:
             btn = "Right-clicked" if right else "Clicked"
-            log.info(f"{btn} {click.label} ({click.click_count}) at {target}")
-        self._fire(click.on_match, "on_match", click.label)
+            log.info(f"{btn} {target.label} ({target.click_count}) at {point}")
+        self._fire(target.on_match, "on_match", target.label)
         return WAIT
 
     @staticmethod
@@ -142,10 +142,10 @@ class ClickStep(Step):
             pass
 
     @staticmethod
-    def _target_point(m: MatchResult, rule: Click) -> tuple[int, int]:
-        x = m.location[0] + m.size[0] // 2 + rule.offset_x
-        if rule.offset_y:
-            y = m.location[1] + m.size[1] + rule.offset_y
+    def _target_point(m: MatchResult, target: Target) -> tuple[int, int]:
+        x = m.location[0] + m.size[0] // 2 + target.offset_x
+        if target.offset_y:
+            y = m.location[1] + m.size[1] + target.offset_y
         else:
             y = m.location[1] + m.size[1] // 2
         return (x, y)

@@ -13,11 +13,32 @@ const browseList = document.getElementById("browse-list");
 const browseUp = document.getElementById("browse-up");
 const browseParent = document.getElementById("browse-parent");
 
+const createRoutineBtn = document.getElementById("create-routine-btn");
+const routineEditorModal = document.getElementById("routine-editor-modal");
+const routineEditorClose = document.getElementById("routine-editor-close");
+const routineEditorTitle = document.getElementById("routine-editor-title");
+const routineNameInput = document.getElementById("routine-name");
+const routineSteps = document.getElementById("routine-steps");
+const routineRecoverSteps = document.getElementById("routine-recover-steps");
+const routineEditorError = document.getElementById("routine-editor-error");
+const addStepBtn = document.getElementById("add-step-btn");
+const addRecoverStepBtn = document.getElementById("add-recover-step-btn");
+const routineSaveBtn = document.getElementById("routine-save-btn");
+const routineCancelBtn = document.getElementById("routine-cancel-btn");
+
+const CONFIG_FIELDS = [
+    { id: "cfg-delay", key: "delay", type: "float" },
+    { id: "cfg-max-step-retry", key: "max_step_retry", type: "int" },
+    { id: "cfg-timeout", key: "timeout", type: "float" },
+    { id: "cfg-max-recover", key: "max_recover", type: "int" },
+];
+
 let ws = null;
 let currentBrowsePath = "";
 let availableRoutines = [];
 let activeChain = [];
 let isActive = false;
+let routineEditorState = newRoutineState();
 
 function connect() {
     const proto = location.protocol === "https:" ? "wss" : "ws";
@@ -98,11 +119,32 @@ function renderAvailable() {
         const row = document.createElement("div");
         row.className = "chain-item";
         row.innerHTML = `<span>${escapeHtml(name)}</span>`;
+        const controls = document.createElement("span");
+        controls.className = "chain-controls";
+
         const addBtn = document.createElement("button");
         addBtn.textContent = "+";
+        addBtn.title = "Add to chain";
         addBtn.disabled = isActive;
         addBtn.addEventListener("click", () => addToChain(name));
-        row.appendChild(addBtn);
+
+        const editBtn = document.createElement("button");
+        editBtn.textContent = "Edit";
+        editBtn.title = "Edit routine";
+        editBtn.disabled = isActive;
+        editBtn.addEventListener("click", () => openRoutineEditor(name));
+
+        const deleteBtn = document.createElement("button");
+        deleteBtn.textContent = "Delete";
+        deleteBtn.title = "Delete routine";
+        deleteBtn.className = "icon-danger";
+        deleteBtn.disabled = isActive;
+        deleteBtn.addEventListener("click", () => deleteRoutine(name));
+
+        controls.appendChild(addBtn);
+        controls.appendChild(editBtn);
+        controls.appendChild(deleteBtn);
+        row.appendChild(controls);
         availableList.appendChild(row);
     }
 }
@@ -259,6 +301,512 @@ function escapeHtml(str) {
     div.textContent = str;
     return div.innerHTML;
 }
+
+function newRoutineState() {
+    return {
+        name: "",
+        config: { delay: 0.5, max_step_retry: 15, timeout: 15.0, max_recover: 3 },
+        steps: [],
+        recover_steps: [],
+    };
+}
+
+function newClickStep() {
+    return {
+        type: "click",
+        label: null,
+        threshold: 0.85,
+        grayscale: true,
+        ready_delay: 0.0,
+        goto_step_not_found: null,
+        alt_chain: [],
+        targets: [newClickRule()],
+    };
+}
+
+function newClickRule() {
+    return {
+        template: "",
+        action: "left_click",
+        offset_x: 0,
+        offset_y: 0,
+        goto: null,
+        stay_on_confirm: false,
+        threshold: null,
+        grayscale: null,
+        label: null,
+    };
+}
+
+function newBranchStep() {
+    return {
+        type: "branch",
+        template: "",
+        goto_found: 0,
+        goto_step_not_found: 0,
+        threshold: 0.85,
+        grayscale: true,
+        label: null,
+    };
+}
+
+async function openRoutineEditor(name) {
+    if (name) {
+        const res = await fetch(`/api/plan/${encodeURIComponent(name)}`);
+        if (!res.ok) {
+            const data = await res.json();
+            appendLog(`Failed to load plan ${name}: ${data.error || res.statusText}`);
+            return;
+        }
+        routineEditorState = await res.json();
+        if (!routineEditorState.config) {
+            routineEditorState.config = newRoutineState().config;
+        }
+        if (!Array.isArray(routineEditorState.steps)) {
+            routineEditorState.steps = [];
+        }
+        if (!Array.isArray(routineEditorState.recover_steps)) {
+            routineEditorState.recover_steps = [];
+        }
+        routineEditorTitle.textContent = "Edit Routine";
+    } else {
+        routineEditorState = newRoutineState();
+        routineEditorState.steps = [newClickStep()];
+        routineEditorTitle.textContent = "Create Routine";
+    }
+    routineNameInput.value = routineEditorState.name || "";
+    loadRoutineConfig();
+    renderRoutineSteps();
+    renderRoutineRecoverSteps();
+    hideRoutineError();
+    routineEditorModal.classList.remove("hidden");
+}
+
+function closeRoutineEditor() {
+    routineEditorModal.classList.add("hidden");
+    routineEditorState = newRoutineState();
+}
+
+function loadRoutineConfig() {
+    for (const field of CONFIG_FIELDS) {
+        const el = document.getElementById(field.id);
+        const val = routineEditorState.config[field.key];
+        el.value = val !== undefined && val !== null ? String(val) : "";
+    }
+}
+
+function readRoutineConfig() {
+    const cfg = {};
+    for (const field of CONFIG_FIELDS) {
+        const el = document.getElementById(field.id);
+        let value = el.value.trim();
+        if (value === "") continue;
+        if (field.type === "int") {
+            const parsed = parseInt(value, 10);
+            if (!isNaN(parsed)) cfg[field.key] = parsed;
+        } else if (field.type === "float") {
+            const parsed = parseFloat(value);
+            if (!isNaN(parsed)) cfg[field.key] = parsed;
+        }
+    }
+    return cfg;
+}
+
+function renderRoutineSteps() {
+    routineSteps.innerHTML = "";
+    routineEditorState.steps.forEach((step, idx) => {
+        routineSteps.appendChild(renderStepCard(step, idx, "steps"));
+    });
+}
+
+function renderRoutineRecoverSteps() {
+    routineRecoverSteps.innerHTML = "";
+    routineEditorState.recover_steps.forEach((step, idx) => {
+        routineRecoverSteps.appendChild(renderStepCard(step, idx, "recover_steps"));
+    });
+}
+
+function renderStepCard(step, idx, listKey) {
+    const card = document.createElement("div");
+    card.className = "step-card";
+
+    const header = document.createElement("div");
+    header.className = "step-header";
+    header.innerHTML = `<span>Step ${idx + 1}</span>`;
+
+    const typeSelect = document.createElement("select");
+    typeSelect.innerHTML = `<option value="click">click</option><option value="branch">branch</option>`;
+    typeSelect.value = step.type || "click";
+    typeSelect.addEventListener("change", () => {
+        step.type = typeSelect.value;
+        if (step.type === "click") {
+            Object.assign(step, newClickStep(), { type: "click" });
+        } else {
+            Object.assign(step, newBranchStep(), { type: "branch" });
+        }
+        refreshEditor();
+    });
+    header.appendChild(typeSelect);
+
+    const upBtn = document.createElement("button");
+    upBtn.textContent = "Up";
+    upBtn.disabled = idx === 0;
+    upBtn.addEventListener("click", () => moveStep(listKey, idx, -1));
+
+    const downBtn = document.createElement("button");
+    downBtn.textContent = "Down";
+    downBtn.disabled = idx === routineEditorState[listKey].length - 1;
+    downBtn.addEventListener("click", () => moveStep(listKey, idx, 1));
+
+    const removeBtn = document.createElement("button");
+    removeBtn.textContent = "Remove";
+    removeBtn.className = "icon-danger";
+    removeBtn.addEventListener("click", () => removeStep(listKey, idx));
+
+    header.appendChild(upBtn);
+    header.appendChild(downBtn);
+    header.appendChild(removeBtn);
+    card.appendChild(header);
+
+    const body = document.createElement("div");
+    body.className = "step-body";
+
+    if (step.type === "branch") {
+        body.appendChild(renderBranchFields(step));
+    } else {
+        body.appendChild(renderClickFields(step));
+    }
+
+    card.appendChild(body);
+    return card;
+}
+
+function renderBranchFields(step) {
+    const grid = document.createElement("div");
+    grid.className = "field-grid";
+    grid.appendChild(makeInputCell("Template", step.template, (v) => (step.template = v)));
+    grid.appendChild(makeInputCell("Goto found", step.goto_found, (v) => (step.goto_found = v)));
+    grid.appendChild(makeInputCell("Goto not found", step.goto_step_not_found, (v) => (step.goto_step_not_found = v)));
+    grid.appendChild(makeInputCell("Threshold", step.threshold, (v) => (step.threshold = v)));
+    grid.appendChild(makeCheckboxCell("Grayscale", step.grayscale, (v) => (step.grayscale = v)));
+    grid.appendChild(makeInputCell("Label", step.label || "", (v) => (step.label = v || null)));
+    return grid;
+}
+
+function renderClickFields(step) {
+    const container = document.createElement("div");
+    container.className = "click-step-body";
+
+    const topGrid = document.createElement("div");
+    topGrid.className = "field-grid";
+    topGrid.appendChild(makeInputCell("Ready delay", step.ready_delay, (v) => (step.ready_delay = v)));
+    topGrid.appendChild(makeInputCell("Goto not found", step.goto_step_not_found, (v) => (step.goto_step_not_found = v)));
+    topGrid.appendChild(makeInputCell("Threshold", step.threshold, (v) => (step.threshold = v)));
+    topGrid.appendChild(makeCheckboxCell("Grayscale", step.grayscale, (v) => (step.grayscale = v)));
+    topGrid.appendChild(makeInputCell("Label", step.label || "", (v) => (step.label = v || null)));
+    container.appendChild(topGrid);
+
+    const targetsTitle = document.createElement("div");
+    targetsTitle.className = "targets-title";
+    targetsTitle.textContent = "Targets";
+    container.appendChild(targetsTitle);
+
+    const targetsBox = document.createElement("div");
+    targetsBox.className = "targets-box";
+    (step.targets || []).forEach((target, ridx) => {
+        targetsBox.appendChild(renderRuleRow(step, target, ridx));
+    });
+    container.appendChild(targetsBox);
+
+    const addTargetBtn = document.createElement("button");
+    addTargetBtn.textContent = "Add Target";
+    addTargetBtn.className = "small-btn";
+    addTargetBtn.addEventListener("click", () => {
+        step.targets.push(newClickRule());
+        refreshEditor();
+    });
+    container.appendChild(addTargetBtn);
+
+    const altTitle = document.createElement("div");
+    altTitle.className = "targets-title";
+    altTitle.textContent = "Alt Chain";
+    container.appendChild(altTitle);
+
+    const altBox = document.createElement("div");
+    altBox.className = "alt-chain-box";
+    (step.alt_chain || []).forEach((tpl, aidx) => {
+        altBox.appendChild(renderAltChainChip(step, tpl, aidx));
+    });
+    container.appendChild(altBox);
+
+    const altRow = document.createElement("div");
+    altRow.className = "alt-input-row";
+    const altInput = document.createElement("input");
+    altInput.type = "text";
+    altInput.placeholder = "templates/...png";
+    const altAdd = document.createElement("button");
+    altAdd.textContent = "Add";
+    altAdd.addEventListener("click", () => {
+        const v = altInput.value.trim();
+        if (!v) return;
+        if (!step.alt_chain) step.alt_chain = [];
+        step.alt_chain.push(v);
+        altInput.value = "";
+        refreshEditor();
+    });
+    altRow.appendChild(altInput);
+    altRow.appendChild(altAdd);
+    container.appendChild(altRow);
+
+    return container;
+}
+
+function renderRuleRow(step, target, ridx) {
+    const row = document.createElement("div");
+    row.className = "rule-row";
+
+    const template = makeLabeledInput("Template", target.template || "", (v) => (target.template = v));
+    template.querySelector("input").placeholder = "templates/...png";
+
+    const actionWrap = document.createElement("div");
+    actionWrap.className = "labeled-field";
+    const actionLabel = document.createElement("label");
+    actionLabel.textContent = "Action";
+    const action = document.createElement("select");
+    action.innerHTML = `<option value="left_click">left_click</option><option value="continue">continue</option><option value="right_click">right_click</option>`;
+    action.value = target.action || "left_click";
+    action.addEventListener("change", () => (target.action = action.value));
+    actionWrap.appendChild(actionLabel);
+    actionWrap.appendChild(action);
+
+    const offsetX = makeLabeledMiniNumber("Offset X", target.offset_x, (v) => (target.offset_x = v));
+    const offsetY = makeLabeledMiniNumber("Offset Y", target.offset_y, (v) => (target.offset_y = v));
+    const goto = makeLabeledMiniNumber("Goto", target.goto, (v) => (target.goto = v), true);
+    const threshold = makeLabeledMiniNumber("Threshold", target.threshold, (v) => (target.threshold = v), true);
+
+    const stay = document.createElement("label");
+    stay.className = "mini-check labeled-check";
+    stay.innerHTML = `<input type="checkbox" ${target.stay_on_confirm ? "checked" : ""}> stay`;
+    stay.querySelector("input").addEventListener("change", (e) => (target.stay_on_confirm = e.target.checked));
+
+    const grayscale = document.createElement("label");
+    grayscale.className = "mini-check labeled-check";
+    grayscale.innerHTML = `<input type="checkbox" ${target.grayscale !== false ? "checked" : ""}> gray`;
+    grayscale.querySelector("input").addEventListener("change", (e) => (target.grayscale = e.target.checked));
+
+    const label = makeLabeledInput("Label", target.label || "", (v) => (target.label = v || null));
+    label.querySelector("input").placeholder = "label";
+
+    const remove = document.createElement("button");
+    remove.textContent = "Remove";
+    remove.className = "icon-danger small-btn";
+    remove.addEventListener("click", () => {
+        step.targets.splice(ridx, 1);
+        refreshEditor();
+    });
+
+    row.appendChild(template);
+    row.appendChild(actionWrap);
+    row.appendChild(offsetX);
+    row.appendChild(offsetY);
+    row.appendChild(goto);
+    row.appendChild(stay);
+    row.appendChild(threshold);
+    row.appendChild(grayscale);
+    row.appendChild(label);
+    row.appendChild(remove);
+    return row;
+}
+
+function makeLabeledInput(labelText, value, setter) {
+    const wrap = document.createElement("div");
+    wrap.className = "labeled-field";
+    const label = document.createElement("label");
+    label.textContent = labelText;
+    const input = document.createElement("input");
+    input.type = "text";
+    input.value = value !== undefined && value !== null ? String(value) : "";
+    input.addEventListener("input", () => setter(input.value));
+    wrap.appendChild(label);
+    wrap.appendChild(input);
+    return wrap;
+}
+
+function makeLabeledMiniNumber(labelText, value, setter, nullable = false) {
+    const wrap = document.createElement("div");
+    wrap.className = "labeled-field";
+    const label = document.createElement("label");
+    label.textContent = labelText;
+    const input = makeMiniNumberInput(value, setter, nullable);
+    wrap.appendChild(label);
+    wrap.appendChild(input);
+    return wrap;
+}
+
+function renderAltChainChip(step, tpl, aidx) {
+    const chip = document.createElement("span");
+    chip.className = "chip";
+    chip.textContent = tpl;
+    const remove = document.createElement("button");
+    remove.textContent = "x";
+    remove.title = "Remove";
+    remove.addEventListener("click", () => {
+        step.alt_chain.splice(aidx, 1);
+        refreshEditor();
+    });
+    chip.appendChild(remove);
+    return chip;
+}
+
+function makeInputCell(labelText, value, setter, nullableNumber = false) {
+    const cell = document.createElement("div");
+    cell.className = "field-cell";
+    const label = document.createElement("label");
+    label.textContent = labelText;
+    const input = document.createElement("input");
+    input.type = "text";
+    input.value = value !== undefined && value !== null ? String(value) : "";
+    input.addEventListener("input", () => {
+        const v = input.value.trim();
+        if (v === "" && nullableNumber) {
+            setter(null);
+            return;
+        }
+        const parsed = parseFloat(v);
+        setter(!isNaN(parsed) ? parsed : v);
+    });
+    cell.appendChild(label);
+    cell.appendChild(input);
+    return cell;
+}
+
+function makeCheckboxCell(labelText, value, setter) {
+    const cell = document.createElement("div");
+    cell.className = "field-cell";
+    const label = document.createElement("label");
+    const input = document.createElement("input");
+    input.type = "checkbox";
+    input.checked = !!value;
+    input.addEventListener("change", () => setter(input.checked));
+    label.appendChild(input);
+    label.appendChild(document.createTextNode(" " + labelText));
+    cell.appendChild(label);
+    return cell;
+}
+
+function makeMiniNumberInput(value, setter, nullable = false) {
+    const input = document.createElement("input");
+    input.type = "number";
+    input.className = "mini-number";
+    if (value !== undefined && value !== null) input.value = String(value);
+    input.addEventListener("input", () => {
+        const v = input.value.trim();
+        if (v === "" && nullable) {
+            setter(null);
+            return;
+        }
+        const parsed = parseFloat(v);
+        setter(!isNaN(parsed) ? parsed : 0);
+    });
+    return input;
+}
+
+function moveStep(listKey, idx, delta) {
+    const arr = routineEditorState[listKey];
+    const newIdx = idx + delta;
+    if (newIdx < 0 || newIdx >= arr.length) return;
+    const temp = arr[idx];
+    arr[idx] = arr[newIdx];
+    arr[newIdx] = temp;
+    refreshEditor();
+}
+
+function removeStep(listKey, idx) {
+    routineEditorState[listKey].splice(idx, 1);
+    refreshEditor();
+}
+
+function refreshEditor() {
+    routineEditorState.config = readRoutineConfig();
+    routineEditorState.name = routineNameInput.value.trim();
+    renderRoutineSteps();
+    renderRoutineRecoverSteps();
+}
+
+function showRoutineError(msg) {
+    routineEditorError.textContent = msg;
+    routineEditorError.classList.remove("hidden");
+}
+
+function hideRoutineError() {
+    routineEditorError.textContent = "";
+    routineEditorError.classList.add("hidden");
+}
+
+async function saveRoutine() {
+    routineEditorState.name = routineNameInput.value.trim();
+    routineEditorState.config = readRoutineConfig();
+    if (!routineEditorState.name) {
+        showRoutineError("Routine name is required.");
+        return;
+    }
+
+    const body = {
+        name: routineEditorState.name,
+        config: routineEditorState.config,
+        steps: routineEditorState.steps,
+    };
+    if (routineEditorState.recover_steps && routineEditorState.recover_steps.length) {
+        body.recover_steps = routineEditorState.recover_steps;
+    }
+
+    const res = await fetch("/api/plan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+        showRoutineError(data.error || "Save failed");
+        return;
+    }
+    appendLog(`Saved routine '${data.name}'`);
+    closeRoutineEditor();
+    loadRoutines();
+}
+
+async function deleteRoutine(name) {
+    if (!confirm(`Delete routine '${name}'?`)) return;
+    const res = await fetch(`/api/plan/${encodeURIComponent(name)}`, { method: "DELETE" });
+    const data = await res.json();
+    if (!res.ok) {
+        appendLog(`Failed to delete routine '${name}': ${data.error || res.statusText}`);
+        return;
+    }
+    appendLog(`Deleted routine '${name}'`);
+    if (activeChain.includes(name)) {
+        activeChain = activeChain.filter((n) => n !== name);
+        renderChain();
+        saveConfig();
+    }
+    loadRoutines();
+}
+
+createRoutineBtn.addEventListener("click", () => openRoutineEditor(null));
+routineEditorClose.addEventListener("click", closeRoutineEditor);
+routineCancelBtn.addEventListener("click", closeRoutineEditor);
+routineSaveBtn.addEventListener("click", saveRoutine);
+addStepBtn.addEventListener("click", () => {
+    routineEditorState.steps.push(newClickStep());
+    refreshEditor();
+});
+addRecoverStepBtn.addEventListener("click", () => {
+    routineEditorState.recover_steps.push(newClickStep());
+    refreshEditor();
+});
+routineEditorModal.addEventListener("click", (e) => {
+    if (e.target === routineEditorModal) closeRoutineEditor();
+});
 
 connect();
 loadConfig();

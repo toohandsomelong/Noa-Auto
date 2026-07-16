@@ -24,7 +24,10 @@
 
   <div class="chain-section">
     <div class="chain-column">
-      <label>Available Routines</label>
+      <div class="chain-header">
+        <label>Available Routines</label>
+        <button id="create-routine-btn">Create Routine</button>
+      </div>
       <div id="available-list" class="chain-list"></div>
     </div>
     <div class="chain-column">
@@ -54,6 +57,59 @@
       <a href="#" id="browse-up">&#8593; Parent folder</a>
     </div>
     <div id="browse-list"></div>
+  </div>
+</div>
+
+<div id="routine-editor-modal" class="modal hidden">
+  <div class="modal-content modal-wide">
+    <div class="modal-header">
+      <span id="routine-editor-title">Create Routine</span>
+      <button id="routine-editor-close">&times;</button>
+    </div>
+    <div id="routine-editor-body" class="modal-body">
+      <div class="field-row">
+        <label for="routine-name">Name</label>
+        <input type="text" id="routine-name" placeholder="my_routine">
+      </div>
+
+      <div class="section-title">Config</div>
+      <div class="field-grid" id="routine-config">
+        <div class="field-cell">
+          <label for="cfg-delay">Delay</label>
+          <input type="number" id="cfg-delay" step="0.1" value="0.5">
+        </div>
+        <div class="field-cell">
+          <label for="cfg-max-step-retry">Max Step Retry</label>
+          <input type="number" id="cfg-max-step-retry" value="15">
+        </div>
+        <div class="field-cell">
+          <label for="cfg-timeout">Timeout</label>
+          <input type="number" id="cfg-timeout" step="0.5" value="15">
+        </div>
+        <div class="field-cell">
+          <label for="cfg-max-recover">Max Recover</label>
+          <input type="number" id="cfg-max-recover" value="3">
+        </div>
+      </div>
+
+      <div class="section-title">
+        Steps
+        <button id="add-step-btn" class="small-btn">Add Step</button>
+      </div>
+      <div id="routine-steps"></div>
+
+      <div class="section-title">
+        Recover Steps
+        <button id="add-recover-step-btn" class="small-btn">Add Recover Step</button>
+      </div>
+      <div id="routine-recover-steps"></div>
+
+      <div id="routine-editor-error" class="editor-error hidden"></div>
+      <div class="editor-actions">
+        <button id="routine-save-btn" class="btn-start">Save</button>
+        <button id="routine-cancel-btn">Cancel</button>
+      </div>
+    </div>
   </div>
 </div>
 

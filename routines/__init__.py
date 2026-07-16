@@ -1,7 +1,27 @@
 from __future__ import annotations
 
-from routines.team_trials import build_team_trials_routine
+from typing import TYPE_CHECKING, Any, Callable
 
-ROUTINES = {
-    "team_trials": build_team_trials_routine,
-}
+from routines.plan_loader import build_routine_from_plan, list_plan_names
+
+if TYPE_CHECKING:
+    from routines.routine import Routine
+
+
+ROUTINE_BUILDER = Callable[[Any], "Routine"]
+
+ROUTINES: dict[str, ROUTINE_BUILDER] = {}
+
+
+def refresh_routines() -> None:
+    """Reload plan names from ``plans/*.json`` into :data:`ROUTINES` in place.
+
+    This mutates the existing dict so imports that captured ``ROUTINES`` see
+    new plans without restarting the process.
+    """
+    ROUTINES.clear()
+    for name in list_plan_names():
+        ROUTINES[name] = build_routine_from_plan
+
+
+refresh_routines()
