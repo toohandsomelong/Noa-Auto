@@ -6,7 +6,9 @@ mss>=9.0
 opencv-python>=4.8
 numpy>=1.24
 pyautogui>=0.9.54
+fastapi>=0.109
+uvicorn[standard]>=0.27
 
 # Install:
 #   conda install -n base pywin32 psutil pillow
-#   pip install pystray mss opencv-python numpy pyautogui
+#   pip install pystray mss opencv-python numpy pyautogui fastapi uvicorn

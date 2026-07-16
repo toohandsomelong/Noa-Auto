@@ -1,0 +1,265 @@
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: "Consolas", "Courier New", monospace;
+    background: #1e1e1e;
+    color: #d4d4d4;
+    padding: 20px;
+    max-width: 800px;
+    margin: 0 auto;
+}
+
+#app {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.path-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.path-row label {
+    min-width: 80px;
+}
+
+.path-row input {
+    flex: 1;
+    background: #2d2d2d;
+    color: #d4d4d4;
+    border: 1px solid #555;
+    padding: 4px 8px;
+    font-family: inherit;
+    font-size: 13px;
+}
+
+.control-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.control-row label {
+    min-width: 80px;
+}
+
+.chain-section {
+    display: flex;
+    gap: 12px;
+}
+
+.chain-column {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.chain-column label {
+    font-weight: bold;
+}
+
+.chain-list {
+    background: #252526;
+    border: 1px solid #444;
+    min-height: 100px;
+    max-height: 160px;
+    overflow-y: auto;
+    padding: 4px;
+}
+
+.chain-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+    padding: 4px 6px;
+    font-size: 13px;
+}
+
+.chain-item:nth-child(odd) {
+    background: #2d2d2d;
+}
+
+.chain-item button {
+    padding: 2px 8px;
+    font-size: 12px;
+    min-width: 28px;
+}
+
+.chain-controls {
+    display: flex;
+    gap: 4px;
+}
+
+.repeat-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.repeat-row input[type="number"] {
+    background: #2d2d2d;
+    color: #d4d4d4;
+    border: 1px solid #555;
+    padding: 4px 8px;
+    font-family: inherit;
+    font-size: 13px;
+    width: 80px;
+}
+
+button {
+    background: #3c3c3c;
+    color: #d4d4d4;
+    border: 1px solid #555;
+    padding: 4px 12px;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 13px;
+}
+
+button:hover {
+    background: #505050;
+}
+
+button:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+.btn-start {
+    background: #1a5c2a;
+    border-color: #2e8b3a;
+}
+
+.btn-start:hover:not(:disabled) {
+    background: #247a35;
+}
+
+.btn-stop {
+    background: #7a1a1a;
+    border-color: #b33;
+}
+
+.btn-stop:hover:not(:disabled) {
+    background: #9e2323;
+}
+
+#status-label {
+    font-weight: bold;
+    font-size: 14px;
+}
+
+.status-idle  { color: #808080; }
+.status-running { color: #4ec94e; }
+.status-paused { color: #dca040; }
+.status-stopped { color: #e05050; }
+
+.log-section {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    flex: 1;
+}
+
+.log-section label {
+    font-weight: bold;
+}
+
+#log-console {
+    background: #0d0d0d;
+    color: #b8b8b8;
+    border: 1px solid #333;
+    padding: 8px;
+    height: 300px;
+    overflow-y: auto;
+    font-size: 12px;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+}
+
+.modal {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.6);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.modal.hidden {
+    display: none;
+}
+
+.modal-content {
+    background: #252526;
+    border: 1px solid #555;
+    border-radius: 4px;
+    width: 500px;
+    max-height: 400px;
+    display: flex;
+    flex-direction: column;
+}
+
+.modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px 14px;
+    border-bottom: 1px solid #444;
+}
+
+.modal-header button {
+    border: none;
+    background: none;
+    color: #d4d4d4;
+    font-size: 18px;
+}
+
+.browse-nav {
+    padding: 6px 14px;
+    border-bottom: 1px solid #333;
+}
+
+.browse-nav a {
+    color: #569cd6;
+    text-decoration: none;
+    font-size: 13px;
+}
+
+#browse-list {
+    overflow-y: auto;
+    flex: 1;
+    padding: 4px 0;
+}
+
+.browse-item {
+    display: block;
+    padding: 4px 14px;
+    color: #d4d4d4;
+    text-decoration: none;
+    font-size: 13px;
+}
+
+.browse-item:hover {
+    background: #37373d;
+}
+
+.browse-item.dir::before {
+    content: "\1F4C1  ";
+}
+
+.browse-item.exe::before {
+    content: "\2699  ";
+    color: #6a9955;
+}
