@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
 from typing import Any
 
 from routines.branch_step import BranchStep
@@ -16,8 +15,6 @@ from routines.step import Step
 
 PLANS_DIR = "plans"
 
-_PLAN_NAME_RE = re.compile(r"^[A-Za-z0-9_-]+$")
-
 
 def list_plan_names() -> list[str]:
     """Return sorted plan names discovered from ``PLANS_DIR/*.json``."""
@@ -30,10 +27,50 @@ def list_plan_names() -> list[str]:
     )
 
 
+def list_plan_labels() -> dict[str, str]:
+    """Return ``{file_stem: plan_name}`` for every ``PLANS_DIR/*.json``.
+
+    The plan ``name`` field is used verbatim. Missing/null ``name`` falls back
+    to the literal ``"plan"``. Corrupt plans are skipped silently to keep the
+    UI list responsive.
+    """
+    if not os.path.isdir(PLANS_DIR):
+        return {}
+
+    labels: dict[str, str] = {}
+    for entry in os.listdir(PLANS_DIR):
+        if not entry.endswith(".json"):
+            continue
+        full = os.path.join(PLANS_DIR, entry)
+        if not os.path.isfile(full):
+            continue
+        stem = os.path.splitext(entry)[0]
+        try:
+            with open(full, encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception:
+            continue
+        name = data.get("name")
+        labels[stem] = name if isinstance(name, str) and name else "plan"
+    return labels
+
+
 def _plan_path(name: str) -> str:
-    """Return the validated filesystem path for a plan file."""
-    if not name or not _PLAN_NAME_RE.match(name):
-        raise ValueError(f"Invalid plan name: {name!r}")
+    """Return the validated filesystem path for a plan file.
+
+    Allows spaces, unicode, and any character the filesystem accepts. Only
+    path traversal attempts and NUL bytes are rejected.
+    """
+    if not name or not isinstance(name, str):
+        raise ValueError(f"Invalid plan name: {name!r} — name must be a non-empty string")
+    if "/" in name:
+        raise ValueError(f"Invalid plan name: {name!r} — name must not contain '/'")
+    if "\\" in name:
+        raise ValueError(f"Invalid plan name: {name!r} — name must not contain '\\'")
+    if name in (".", ".."):
+        raise ValueError(f"Invalid plan name: {name!r} — name must not be '.' or '..'")
+    if "\x00" in name:
+        raise ValueError(f"Invalid plan name: {name!r} — name must not contain NUL bytes")
     return os.path.join(PLANS_DIR, f"{name}.json")
 
 
@@ -51,6 +88,10 @@ def get_plan(name: str) -> dict[str, Any] | None:
 
 def save_plan(name: str, data: dict[str, Any]) -> str:
     """Validate and write a plan JSON file.
+
+    The output path is ``plans/<name>.json`` — ``name`` is the file stem
+    supplied by the caller (the URL on edit, the plan's ``name`` field on
+    create). Changing the plan's ``name`` field does NOT move the file.
 
     Returns the saved path. Raises :class:`ValueError` on invalid input.
     """
@@ -170,13 +211,8 @@ def _build_click_step(raw: dict[str, Any]) -> ClickStep:
     """Build a :class:`ClickStep` from JSON."""
     targets = [Target(**_target_kwargs(target)) for target in raw.get("targets", [])]
 
-    alt_chain = raw.get("alt_chain")
-    if alt_chain is not None and not alt_chain:
-        alt_chain = None
-
     return ClickStep(
         targets,
-        alt_chain=alt_chain,
         goto_step_not_found=raw.get("goto_step_not_found"),
         ready_delay=raw.get("ready_delay", 0.0),
         threshold=raw.get("threshold", 0.85),

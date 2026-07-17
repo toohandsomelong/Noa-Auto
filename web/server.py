@@ -10,9 +10,10 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 import uvicorn
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.base import BaseHTTPMiddleware
 
 import win32api
 import win32event
@@ -36,6 +37,14 @@ def acquire_mutex() -> bool:
     if win32api.GetLastError() == winerror.ERROR_ALREADY_EXISTS:
         return False
     return True
+
+
+class NoCacheStaticMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        response: Response = await call_next(request)
+        if request.url.path.startswith("/static/"):
+            response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        return response
 
 
 def broadcast_log(line: str) -> None:
@@ -72,6 +81,7 @@ def create_app(controller: BotController) -> FastAPI:
         yield
 
     app = FastAPI(title="Noa Auto", lifespan=_lifespan)
+    app.add_middleware(NoCacheStaticMiddleware)
 
     controller.on_log_event(broadcast_log)
     controller.on_state_event(broadcast_state)
@@ -115,6 +125,7 @@ def create_app(controller: BotController) -> FastAPI:
 
     @app.get("/api/routines")
     async def list_routines() -> JSONResponse:
+        refresh_routines()
         return JSONResponse(content=controller.get_routines())
 
     @app.get("/api/plan/{name}")
@@ -131,6 +142,19 @@ def create_app(controller: BotController) -> FastAPI:
     async def save_plan_data(body: dict) -> JSONResponse:
         name = body.get("name", "")
         try:
+            save_plan(name, body)
+            refresh_routines()
+        except Exception as e:
+            return JSONResponse(status_code=400, content={"error": str(e)})
+        return JSONResponse(
+            content={"ok": True, "name": name, "routines": list(ROUTINES.keys())}
+        )
+
+    @app.put("/api/plan/{name}")
+    async def update_plan_data(name: str, body: dict) -> JSONResponse:
+        try:
+            if get_plan(name) is None:
+                return JSONResponse(status_code=404, content={"error": "Plan not found"})
             save_plan(name, body)
             refresh_routines()
         except Exception as e:

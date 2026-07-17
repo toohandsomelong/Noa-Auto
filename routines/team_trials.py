@@ -66,10 +66,6 @@ def build_team_trials_routine(logger: Any) -> Routine:
                 ),
                 Target("templates/racemenu/teamtrials/7.png"),
             ],
-            alt_chain=[ #problem here, alt chain should not use string
-                "templates/racemenu/teamtrials/smallnext.png",
-                "templates/racemenu/teamtrials/2-6.png",
-            ],
         ),
         ClickStep(
             [Target("templates/racemenu/teamtrials/end.png", action=ClickAction.RIGHT_CLICK)],

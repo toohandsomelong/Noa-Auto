@@ -1,5 +1,5 @@
 {
-  "name": "team_trials copy",
+  "name": "team_trials",
   "config": {
     "delay": 0.5,
     "max_step_retry": 15,

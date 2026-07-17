@@ -215,15 +215,24 @@ button:disabled {
     display: flex;
     justify-content: space-between;
     align-items: center;
+    gap: 8px;
     padding: 10px 14px;
     border-bottom: 1px solid #444;
 }
 
-.modal-header button {
+#routine-editor-close,
+#browse-close {
     border: none;
     background: none;
     color: #d4d4d4;
-    font-size: 18px;
+    font-size: 22px;
+    line-height: 1;
+}
+
+.modal-header-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
 }
 
 .browse-nav {
@@ -476,49 +485,6 @@ button:disabled {
     padding-bottom: 4px;
 }
 
-.alt-chain-box {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px;
-}
-
-.chip {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    background: #3c3c3c;
-    border: 1px solid #555;
-    padding: 2px 6px;
-    font-size: 12px;
-}
-
-.chip button {
-    padding: 0 4px;
-    font-size: 11px;
-    background: transparent;
-    border: none;
-    color: #d4d4d4;
-}
-
-.chip button:hover {
-    color: #ff6b6b;
-}
-
-.alt-input-row {
-    display: flex;
-    gap: 6px;
-}
-
-.alt-input-row input {
-    flex: 1;
-    background: #2d2d2d;
-    color: #d4d4d4;
-    border: 1px solid #555;
-    padding: 4px 6px;
-    font-family: inherit;
-    font-size: 13px;
-}
-
 .editor-error {
     color: #ff6b6b;
     font-size: 13px;
@@ -531,8 +497,4 @@ button:disabled {
     display: none;
 }
 
-.editor-actions {
-    display: flex;
-    gap: 8px;
-    justify-content: flex-end;
-}
+

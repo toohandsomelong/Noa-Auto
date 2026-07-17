@@ -24,8 +24,6 @@ const routineEditorError = document.getElementById("routine-editor-error");
 const addStepBtn = document.getElementById("add-step-btn");
 const addRecoverStepBtn = document.getElementById("add-recover-step-btn");
 const routineSaveBtn = document.getElementById("routine-save-btn");
-const routineCancelBtn = document.getElementById("routine-cancel-btn");
-
 const CONFIG_FIELDS = [
     { id: "cfg-delay", key: "delay", type: "float" },
     { id: "cfg-max-step-retry", key: "max_step_retry", type: "int" },
@@ -36,8 +34,10 @@ const CONFIG_FIELDS = [
 let ws = null;
 let currentBrowsePath = "";
 let availableRoutines = [];
+let routineLabels = {};
 let activeChain = [];
 let isActive = false;
+let editingFilename = null;
 let routineEditorState = newRoutineState();
 
 function connect() {
@@ -103,6 +103,7 @@ async function loadRoutines() {
     const res = await fetch("/api/routines");
     const data = await res.json();
     availableRoutines = data.routines || [];
+    routineLabels = data.labels || {};
     renderAvailable();
     if (Array.isArray(data.chain)) {
         activeChain = data.chain;
@@ -118,7 +119,7 @@ function renderAvailable() {
     for (const name of availableRoutines) {
         const row = document.createElement("div");
         row.className = "chain-item";
-        row.innerHTML = `<span>${escapeHtml(name)}</span>`;
+        row.innerHTML = `<span>${escapeHtml(routineLabels[name] ?? name)}</span>`;
         const controls = document.createElement("span");
         controls.className = "chain-controls";
 
@@ -154,7 +155,7 @@ function renderChain() {
     activeChain.forEach((name, idx) => {
         const row = document.createElement("div");
         row.className = "chain-item";
-        row.innerHTML = `<span>${idx + 1}. ${escapeHtml(name)}</span>`;
+        row.innerHTML = `<span>${idx + 1}. ${escapeHtml(routineLabels[name] ?? name)}</span>`;
         const controls = document.createElement("span");
         controls.className = "chain-controls";
 
@@ -319,12 +320,11 @@ function newClickStep() {
         grayscale: true,
         ready_delay: 0.0,
         goto_step_not_found: null,
-        alt_chain: [],
-        targets: [newClickRule()],
+        targets: [newClickTarget()],
     };
 }
 
-function newClickRule() {
+function newClickTarget() {
     return {
         template: "",
         action: "left_click",
@@ -332,8 +332,8 @@ function newClickRule() {
         offset_y: 0,
         goto: null,
         stay_on_confirm: false,
-        threshold: null,
-        grayscale: null,
+        threshold: 0.85,
+        grayscale: true,
         label: null,
     };
 }
@@ -359,6 +359,7 @@ async function openRoutineEditor(name) {
             return;
         }
         routineEditorState = await res.json();
+        editingFilename = name;
         if (!routineEditorState.config) {
             routineEditorState.config = newRoutineState().config;
         }
@@ -372,6 +373,7 @@ async function openRoutineEditor(name) {
     } else {
         routineEditorState = newRoutineState();
         routineEditorState.steps = [newClickStep()];
+        editingFilename = null;
         routineEditorTitle.textContent = "Create Routine";
     }
     routineNameInput.value = routineEditorState.name || "";
@@ -385,6 +387,7 @@ async function openRoutineEditor(name) {
 function closeRoutineEditor() {
     routineEditorModal.classList.add("hidden");
     routineEditorState = newRoutineState();
+    editingFilename = null;
 }
 
 function loadRoutineConfig() {
@@ -522,41 +525,10 @@ function renderClickFields(step) {
     addTargetBtn.textContent = "Add Target";
     addTargetBtn.className = "small-btn";
     addTargetBtn.addEventListener("click", () => {
-        step.targets.push(newClickRule());
+        step.targets.push(newClickTarget());
         refreshEditor();
     });
     container.appendChild(addTargetBtn);
-
-    const altTitle = document.createElement("div");
-    altTitle.className = "targets-title";
-    altTitle.textContent = "Alt Chain";
-    container.appendChild(altTitle);
-
-    const altBox = document.createElement("div");
-    altBox.className = "alt-chain-box";
-    (step.alt_chain || []).forEach((tpl, aidx) => {
-        altBox.appendChild(renderAltChainChip(step, tpl, aidx));
-    });
-    container.appendChild(altBox);
-
-    const altRow = document.createElement("div");
-    altRow.className = "alt-input-row";
-    const altInput = document.createElement("input");
-    altInput.type = "text";
-    altInput.placeholder = "templates/...png";
-    const altAdd = document.createElement("button");
-    altAdd.textContent = "Add";
-    altAdd.addEventListener("click", () => {
-        const v = altInput.value.trim();
-        if (!v) return;
-        if (!step.alt_chain) step.alt_chain = [];
-        step.alt_chain.push(v);
-        altInput.value = "";
-        refreshEditor();
-    });
-    altRow.appendChild(altInput);
-    altRow.appendChild(altAdd);
-    container.appendChild(altRow);
 
     return container;
 }
@@ -641,21 +613,6 @@ function makeLabeledMiniNumber(labelText, value, setter, nullable = false) {
     wrap.appendChild(label);
     wrap.appendChild(input);
     return wrap;
-}
-
-function renderAltChainChip(step, tpl, aidx) {
-    const chip = document.createElement("span");
-    chip.className = "chip";
-    chip.textContent = tpl;
-    const remove = document.createElement("button");
-    remove.textContent = "x";
-    remove.title = "Remove";
-    remove.addEventListener("click", () => {
-        step.alt_chain.splice(aidx, 1);
-        refreshEditor();
-    });
-    chip.appendChild(remove);
-    return chip;
 }
 
 function makeInputCell(labelText, value, setter, nullableNumber = false) {
@@ -760,8 +717,13 @@ async function saveRoutine() {
         body.recover_steps = routineEditorState.recover_steps;
     }
 
-    const res = await fetch("/api/plan", {
-        method: "POST",
+    const isEdit = editingFilename !== null;
+    const url = isEdit
+        ? `/api/plan/${encodeURIComponent(editingFilename)}`
+        : "/api/plan";
+    const method = isEdit ? "PUT" : "POST";
+    const res = await fetch(url, {
+        method: method,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
     });
@@ -794,7 +756,6 @@ async function deleteRoutine(name) {
 
 createRoutineBtn.addEventListener("click", () => openRoutineEditor(null));
 routineEditorClose.addEventListener("click", closeRoutineEditor);
-routineCancelBtn.addEventListener("click", closeRoutineEditor);
 routineSaveBtn.addEventListener("click", saveRoutine);
 addStepBtn.addEventListener("click", () => {
     routineEditorState.steps.push(newClickStep());

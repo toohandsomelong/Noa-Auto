@@ -1,0 +1,182 @@
+{
+  "name": "team_trials dawdwad",
+  "steps": [
+    {
+      "type": "click",
+      "targets": [
+        {
+          "template": "templates/main/raceMenuNoActive.png",
+          "stay_on_confirm": false
+        },
+        {
+          "template": "templates/main/raceMenuNoActive.png",
+          "action": "left_click"
+        }
+      ],
+      "grayscale": false
+    },
+    {
+      "type": "click",
+      "targets": [
+        {
+          "template": "templates/main/raceMenuActive.png",
+          "action": "continue",
+          "stay_on_confirm": false
+        }
+      ]
+    },
+    {
+      "type": "click",
+      "targets": [
+        {
+          "template": "templates/racemenu/teamtrials.png"
+        }
+      ]
+    },
+    {
+      "type": "click",
+      "targets": [
+        {
+          "template": "templates/racemenu/teamtrials/1.png"
+        }
+      ]
+    },
+    {
+      "type": "click",
+      "ready_delay": 3,
+      "targets": [
+        {
+          "template": "templates/racemenu/teamtrials/end.png",
+          "action": "right_click",
+          "goto": 14
+        },
+        {
+          "template": "templates/racemenu/teamtrials/selectopponent.png",
+          "offset_y": 50
+        }
+      ]
+    },
+    {
+      "type": "click",
+      "targets": [
+        {
+          "template": "templates/racemenu/teamtrials/next.png"
+        }
+      ]
+    },
+    {
+      "type": "click",
+      "targets": [
+        {
+          "template": "templates/racemenu/teamtrials/3.png"
+        }
+      ]
+    },
+    {
+      "type": "click",
+      "targets": [
+        {
+          "template": "templates/racemenu/teamtrials/quickYes.png",
+          "action": "continue"
+        },
+        {
+          "template": "templates/racemenu/teamtrials/quickNo.png"
+        }
+      ]
+    },
+    {
+      "type": "click",
+      "targets": [
+        {
+          "template": "templates/racemenu/teamtrials/4.png"
+        }
+      ]
+    },
+    {
+      "type": "click",
+      "targets": [
+        {
+          "template": "templates/racemenu/teamtrials/5.png"
+        }
+      ]
+    },
+    {
+      "type": "click",
+      "targets": [
+        {
+          "template": "templates/racemenu/teamtrials/2-6.png"
+        }
+      ]
+    },
+    {
+      "type": "click",
+      "alt_chain": [],
+      "targets": [
+        {
+          "template": "templates/racemenu/teamtrials/highscore.png",
+          "stay_on_confirm": true
+        },
+        {
+          "template": "templates/racemenu/teamtrials/shop.png",
+          "action": "right_click",
+          "stay_on_confirm": true
+        },
+        {
+          "template": "templates/racemenu/teamtrials/7.png"
+        },
+        {
+          "template": "templates/racemenu/teamtrials/smallnext.png",
+          "action": "left_click",
+          "stay_on_confirm": true
+        },
+        {
+          "template": "templates/racemenu/teamtrials/2-6.png",
+          "action": "left_click",
+          "stay_on_confirm": true
+        }
+      ]
+    },
+    {
+      "type": "click",
+      "goto_step_not_found": 4,
+      "targets": [
+        {
+          "template": "templates/racemenu/teamtrials/end.png",
+          "action": "right_click"
+        }
+      ]
+    },
+    {
+      "type": "click",
+      "targets": [
+        {
+          "template": "templates/racemenu/teamtrials/smallnext.png"
+        }
+      ]
+    },
+    {
+      "type": "click",
+      "targets": [
+        {
+          "template": "templates/main/home.png"
+        }
+      ]
+    }
+  ],
+  "recover_steps": [
+    {
+      "type": "click",
+      "targets": [
+        {
+          "template": "templates/main/home.png"
+        }
+      ]
+    }
+  ],
+  "config": {
+    "delay": 0.5,
+    "max_step_retry": 15,
+    "timeout": 15,
+    "max_recover": 3
+  }
+}

@@ -15,6 +15,7 @@ from core.logger import Logger
 from core.screen_bot import ScreenBot
 from core.state_manager import BotState, StateManager
 from routines import ROUTINES
+from routines.plan_loader import list_plan_labels
 
 CONFIG_FILE = "config.json"
 
@@ -235,6 +236,10 @@ class BotController:
             self.logger.error(f"Failed to build routine '{name}': {e}")
             return
 
+        if routine is None:
+            self.logger.error(f"Routine '{name}' could not be built")
+            return
+
         if self.screen_bot is None:
             return
         self.screen_bot.start_routine(routine)
@@ -336,6 +341,7 @@ class BotController:
         config = self.get_config()
         return {
             "routines": list(ROUTINES.keys()),
+            "labels": list_plan_labels(),
             "current": config["routines"][0] if config["routines"] else "",
             "chain": config["routines"],
             "repeat": config["repeat"],

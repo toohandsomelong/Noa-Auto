@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from functools import partial
 from typing import TYPE_CHECKING, Any, Callable
 
 from routines.plan_loader import build_routine_from_plan, list_plan_names
@@ -8,7 +9,7 @@ if TYPE_CHECKING:
     from routines.routine import Routine
 
 
-ROUTINE_BUILDER = Callable[[Any], "Routine"]
+ROUTINE_BUILDER = Callable[[Any], "Routine | None"]
 
 ROUTINES: dict[str, ROUTINE_BUILDER] = {}
 
@@ -21,7 +22,7 @@ def refresh_routines() -> None:
     """
     ROUTINES.clear()
     for name in list_plan_names():
-        ROUTINES[name] = build_routine_from_plan
+        ROUTINES[name] = partial(build_routine_from_plan, name)
 
 
 refresh_routines()
