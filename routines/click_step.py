@@ -65,6 +65,8 @@ class ClickStep(Step):
         thresh = target.threshold if target.threshold is not None else self.threshold
         gs = target.grayscale if target.grayscale is not None else self.grayscale
         m = match_template(screenshot, target.template, threshold=thresh, grayscale=gs)
+        self.last_match = m
+        self.last_match_label = target.label if m is not None else None
         log = self.logger
 
         if m is None:

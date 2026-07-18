@@ -12,6 +12,13 @@ const browseClose = document.getElementById("browse-close");
 const browseList = document.getElementById("browse-list");
 const browseUp = document.getElementById("browse-up");
 const browseParent = document.getElementById("browse-parent");
+const previewToggle = document.getElementById("preview-toggle");
+const previewImg = document.getElementById("preview-img");
+const previewMode = document.getElementById("preview-mode");
+const previewLive = document.getElementById("preview-live");
+const previewStrip = document.getElementById("preview-strip");
+const stripList = document.getElementById("strip-list");
+const previewEmpty = document.getElementById("preview-empty");
 
 const createRoutineBtn = document.getElementById("create-routine-btn");
 const routineEditorModal = document.getElementById("routine-editor-modal");
@@ -39,6 +46,9 @@ let activeChain = [];
 let isActive = false;
 let editingFilename = null;
 let routineEditorState = newRoutineState();
+let previewEnabled = false;
+let previewFramePending = false;
+let snapshotRows = new Map();
 
 function connect() {
     const proto = location.protocol === "https:" ? "wss" : "ws";
@@ -49,11 +59,62 @@ function connect() {
             appendLog(data.line);
         } else if (data.type === "state") {
             updateState(data.state);
+        } else if (data.type === "frame") {
+            if (previewEnabled && !previewFramePending) {
+                previewFramePending = true;
+                requestAnimationFrame(() => {
+                    previewFramePending = false;
+                    handleFrame(data);
+                });
+            }
+        } else if (data.type === "preview_clear") {
+            snapshotRows.clear();
+            renderStrip();
         }
     };
     ws.onclose = () => {
         setTimeout(connect, 2000);
     };
+}
+
+function handleFrame(data) {
+    if (previewMode.value === "live") {
+        previewImg.src = "data:image/jpeg;base64," + data.jpeg;
+        return;
+    }
+    const idx = data.step_index;
+    if (idx === null || idx === undefined) {
+        return;
+    }
+    snapshotRows.set(idx, data);
+    renderStrip();
+}
+
+function renderStrip() {
+    stripList.innerHTML = "";
+    if (snapshotRows.size === 0) {
+        previewEmpty.classList.remove("hidden");
+        return;
+    }
+    previewEmpty.classList.add("hidden");
+    const indices = Array.from(snapshotRows.keys()).sort((a, b) => a - b);
+    for (const idx of indices) {
+        const row = snapshotRows.get(idx);
+        const div = document.createElement("div");
+        div.className = "strip-row";
+        const img = document.createElement("img");
+        img.src = "data:image/jpeg;base64," + row.jpeg;
+        img.alt = "step " + idx;
+        const meta = document.createElement("div");
+        meta.className = "strip-meta";
+        const label = row.step_label || "step";
+        const conf = row.confidence != null ? row.confidence.toFixed(2) : "-";
+        const ts = row.timestamp ? new Date(row.timestamp * 1000).toLocaleTimeString() : "-";
+        meta.textContent = `step ${idx} · ${label} · ${conf} · ${ts}`;
+        div.appendChild(img);
+        div.appendChild(meta);
+        stripList.appendChild(div);
+    }
 }
 
 function appendLog(line) {
@@ -83,6 +144,50 @@ async function fetchState() {
     updateState(data.state);
     if (data.game_path) {
         pathInput.value = data.game_path;
+    }
+}
+
+async function loadPreviewState() {
+    try {
+        const res = await fetch("/api/preview");
+        const data = await res.json();
+        previewEnabled = Boolean(data.enabled);
+        previewToggle.checked = previewEnabled;
+        if (data.mode === "live" || data.mode === "snapshot") {
+            previewMode.value = data.mode;
+        }
+        updatePreviewView();
+    } catch (e) {
+        appendLog("Failed to load preview state: " + e.message);
+    }
+}
+
+async function applyPreviewSettings() {
+    previewEnabled = previewToggle.checked;
+    updatePreviewView();
+    if (!previewEnabled) {
+        previewImg.src = "";
+        snapshotRows.clear();
+        renderStrip();
+    }
+    try {
+        await fetch("/api/preview", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ enabled: previewEnabled, mode: previewMode.value }),
+        });
+    } catch (e) {
+        appendLog("Failed to set preview: " + e.message);
+    }
+}
+
+function updatePreviewView() {
+    const isLive = previewMode.value === "live";
+    previewLive.classList.toggle("hidden", !(previewEnabled && isLive));
+    previewStrip.classList.toggle("hidden", !(previewEnabled && !isLive));
+    if (!previewEnabled) {
+        previewLive.classList.add("hidden");
+        previewStrip.classList.add("hidden");
     }
 }
 
@@ -773,3 +878,7 @@ connect();
 loadConfig();
 loadRoutines();
 fetchState();
+loadPreviewState();
+
+previewToggle.addEventListener("change", applyPreviewSettings);
+previewMode.addEventListener("change", applyPreviewSettings);

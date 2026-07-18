@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import time
 from typing import Any
 
@@ -20,12 +21,16 @@ class Step:
     clicked: bool = False
     click_count: int = 0
     seek_start_time: float = 0.0
+    last_match: MatchResult | None = None
+    last_match_label: str | None = None
 
     def tick(self, screenshot: Any) -> int:
         return WAIT
 
     def reset(self) -> None:
         self.reset_click_state()
+        self.last_match = None
+        self.last_match_label = None
 
     def reset_click_state(self) -> None:
         self.clicked = False
@@ -33,9 +38,13 @@ class Step:
         self.seek_start_time = 0.0
 
     def match(self, screenshot: Any, path: str) -> MatchResult | None:
-        return match_template(
+        result = match_template(
             screenshot, path, threshold=self.threshold, grayscale=self.grayscale
         )
+        self.last_match = result
+        if result is not None:
+            self.last_match_label = self.label or os.path.basename(path)
+        return result
 
     def click(self, point: tuple[int, int], *, right: bool = False) -> bool:
         return do_click(point, right=right, label=self.label, logger=self.logger)

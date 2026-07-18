@@ -9,42 +9,71 @@
 <body>
 
 <div id="app">
-  <div class="path-row">
-    <label>Game Path:</label>
-    <input type="text" id="path-input" placeholder="D:/path/to/game.exe">
-    <button id="browse-btn">Browse</button>
-  </div>
+  <div class="app-main">
+    <div class="path-row">
+      <label>Game Path:</label>
+      <input type="text" id="path-input" placeholder="D:/path/to/game.exe">
+      <button id="browse-btn">Browse</button>
+    </div>
 
-  <div class="control-row">
-    <label>Status:</label>
-    <span id="status-label" class="status-idle">IDLE</span>
-    <button id="start-btn" class="btn-start">&#9654; Start</button>
-    <button id="stop-btn" class="btn-stop" disabled>&#9632; Stop</button>
-  </div>
+    <div class="control-row">
+      <label>Status:</label>
+      <span id="status-label" class="status-idle">IDLE</span>
+      <button id="start-btn" class="btn-start">&#9654; Start</button>
+      <button id="stop-btn" class="btn-stop" disabled>&#9632; Stop</button>
+    </div>
 
-  <div class="chain-section">
-    <div class="chain-column">
-      <div class="chain-header">
-        <label>Available Routines</label>
-        <button id="create-routine-btn">Create Routine</button>
+    <div class="chain-section">
+      <div class="chain-column">
+        <div class="chain-header">
+          <label>Available Routines</label>
+          <button id="create-routine-btn">Create Routine</button>
+        </div>
+        <div id="available-list" class="chain-list"></div>
       </div>
-      <div id="available-list" class="chain-list"></div>
+      <div class="chain-column">
+        <label>Active Chain</label>
+        <div id="chain-list" class="chain-list"></div>
+      </div>
     </div>
-    <div class="chain-column">
-      <label>Active Chain</label>
-      <div id="chain-list" class="chain-list"></div>
+
+    <div class="repeat-row">
+      <label>Repeat:</label>
+      <input type="number" id="repeat-input" min="1" value="1">
+    </div>
+
+    <div class="log-section">
+      <label>Log</label>
+      <pre id="log-console"></pre>
     </div>
   </div>
 
-  <div class="repeat-row">
-    <label>Repeat:</label>
-    <input type="number" id="repeat-input" min="1" value="1">
-  </div>
-
-  <div class="log-section">
-    <label>Log</label>
-    <pre id="log-console"></pre>
-  </div>
+  <aside class="app-sidebar">
+    <div class="preview-section">
+      <div class="preview-header">
+        <label>Capture Preview</label>
+        <div class="preview-controls">
+          <select id="preview-mode">
+            <option value="snapshot">Snapshot</option>
+            <option value="live">Live</option>
+          </select>
+          <label class="toggle-label">
+            <input type="checkbox" id="preview-toggle">
+            <span>Show</span>
+          </label>
+        </div>
+      </div>
+      <div class="preview-wrapper">
+        <div id="preview-live" class="preview-live hidden">
+          <img id="preview-img" alt="live capture">
+        </div>
+        <div id="preview-strip" class="preview-strip">
+          <div id="strip-list"></div>
+          <span id="preview-empty" class="preview-empty">No match captured yet</span>
+        </div>
+      </div>
+    </div>
+  </aside>
 </div>
 
 <div id="browse-modal" class="modal hidden">

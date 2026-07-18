@@ -39,6 +39,7 @@ class BotController:
 
         self._log_listeners: list[Callable[[str], None]] = []
         self._state_listeners: list[Callable[[dict], None]] = []
+        self._frame_listeners: list[Callable[[dict], None]] = []
 
         self._flush_stop = threading.Event()
         self._flush_thread: threading.Thread | None = None
@@ -57,6 +58,9 @@ class BotController:
 
     def on_state_event(self, listener: Callable[[dict], None]) -> None:
         self._state_listeners.append(listener)
+
+    def on_frame_event(self, listener: Callable[[dict], None]) -> None:
+        self._frame_listeners.append(listener)
 
     def start_flush(self) -> None:
         if self._flush_thread is not None:
@@ -90,6 +94,39 @@ class BotController:
                 listener(data)
             except Exception:
                 pass
+
+    def _on_frame(self, payload: dict) -> None:
+        if payload.get("action") == "clear":
+            data = {"type": "preview_clear"}
+        else:
+            data = {"type": "frame", **payload}
+        for listener in self._frame_listeners:
+            try:
+                listener(data)
+            except Exception:
+                pass
+
+    def set_preview(self, enabled: bool) -> bool:
+        if self.screen_bot is None:
+            return False
+        self.screen_bot.preview = enabled
+        return True
+
+    def set_preview_mode(self, mode: str) -> bool:
+        if self.screen_bot is None:
+            return False
+        if mode not in ("snapshot", "live"):
+            return False
+        self.screen_bot.preview_mode = mode
+        return True
+
+    def get_preview(self) -> dict:
+        if self.screen_bot is None:
+            return {"enabled": False, "mode": "snapshot"}
+        return {
+            "enabled": self.screen_bot.preview,
+            "mode": self.screen_bot.preview_mode,
+        }
 
     def get_state(self) -> dict:
         config = self.get_config()
@@ -149,6 +186,7 @@ class BotController:
         self.focus_watcher.start()
         if self.screen_bot is not None:
             self.screen_bot.on_routine_done = self._on_routine_done
+            self.screen_bot.on_frame = self._on_frame
             self.screen_bot.start()
             self._kickoff_chain()
         self._monitor_process()
@@ -190,6 +228,7 @@ class BotController:
         self.focus_watcher.start()
         if self.screen_bot is not None:
             self.screen_bot.on_routine_done = self._on_routine_done
+            self.screen_bot.on_frame = self._on_frame
             self.screen_bot.start()
             self._kickoff_chain()
         self._monitor_process()

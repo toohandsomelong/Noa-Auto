@@ -49,6 +49,13 @@ class Routine:
         if 0 <= idx < len(self.steps):
             self.steps[idx].reset()
 
+    def current_step(self) -> Step | None:
+        if self.done:
+            return None
+        if 0 <= self._index < len(self.steps):
+            return self.steps[self._index]
+        return None
+
     def tick(self, screenshot: Any) -> None:
         if self.done:
             return

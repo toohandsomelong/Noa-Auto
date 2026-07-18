@@ -55,6 +55,10 @@ def broadcast_state(data: dict) -> None:
     _schedule_broadcast(data)
 
 
+def broadcast_frame(data: dict) -> None:
+    _schedule_broadcast(data)
+
+
 def _schedule_broadcast(data: dict) -> None:
     if _loop is None:
         return
@@ -85,6 +89,7 @@ def create_app(controller: BotController) -> FastAPI:
 
     controller.on_log_event(broadcast_log)
     controller.on_state_event(broadcast_state)
+    controller.on_frame_event(broadcast_frame)
 
     @app.get("/")
     async def index() -> FileResponse:
@@ -117,6 +122,21 @@ def create_app(controller: BotController) -> FastAPI:
         repeat = body.get("repeat")
         controller.set_config(game_path=path, routines=routines, repeat=repeat)
         return JSONResponse(content={"ok": True})
+
+    @app.get("/api/preview")
+    async def get_preview() -> JSONResponse:
+        return JSONResponse(content=controller.get_preview())
+
+    @app.post("/api/preview")
+    async def set_preview(body: dict) -> JSONResponse:
+        enabled = bool(body.get("enabled", False))
+        mode = body.get("mode")
+        ok = controller.set_preview(enabled)
+        if not ok:
+            return JSONResponse(status_code=503, content={"error": "Screen bot not available"})
+        if isinstance(mode, str):
+            controller.set_preview_mode(mode)
+        return JSONResponse(content=controller.get_preview())
 
     @app.get("/api/browse")
     async def browse_path(path: str = "") -> JSONResponse:
