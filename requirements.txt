@@ -7,6 +7,7 @@ opencv-python>=4.8
 numpy>=1.24
 pyautogui>=0.9.54
 fastapi>=0.109
+starlette>=0.36
 uvicorn[standard]>=0.27
 
 # Install:
