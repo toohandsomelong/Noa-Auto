@@ -5,13 +5,12 @@ from typing import Callable
 
 from routines.click_action import ClickAction
 
-
-class Click:
+class Target:
     def __init__(
         self,
         template: str,
         *,
-        action: ClickAction = ClickAction.CLICK,
+        action: ClickAction = ClickAction.LEFT_CLICK,
         offset_x: int = 0,
         offset_y: int = 0,
         on_match: Callable[[], None] | None = None,
@@ -19,7 +18,7 @@ class Click:
         goto: int | None = None,
         stay_on_confirm: bool = False,
         threshold: float | None = None,
-        grayscale: bool | None = None,
+        grayscale: bool = True,
         label: str | None = None,
     ) -> None:
         self.template = template

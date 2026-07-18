@@ -3,6 +3,6 @@ from enum import Enum
 
 
 class ClickAction(Enum):
-    CLICK = "click"
-    ADVANCE = "advance"
+    LEFT_CLICK = "left_click"
+    CONTINUE = "continue"
     RIGHT_CLICK = "right_click"

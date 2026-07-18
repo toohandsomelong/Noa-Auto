@@ -10,14 +10,17 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 import uvicorn
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.base import BaseHTTPMiddleware
 
 import win32api
 import win32event
 import winerror
 
+from routines import ROUTINES, refresh_routines
+from routines.plan_loader import delete_plan, get_plan, save_plan
 from web.bot_controller import BotController
 
 MUTEX_NAME = "Global\\NoaAutoSingleInstance"
@@ -36,11 +39,27 @@ def acquire_mutex() -> bool:
     return True
 
 
+class NoCacheStaticMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        response: Response = await call_next(request)
+        if request.url.path.startswith("/static/"):
+            response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        return response
+
+
 def broadcast_log(line: str) -> None:
     _schedule_broadcast({"type": "log", "line": line})
 
 
 def broadcast_state(data: dict) -> None:
+    _schedule_broadcast(data)
+
+
+def broadcast_frame(data: dict) -> None:
+    _schedule_broadcast(data)
+
+
+def broadcast_config(data: dict) -> None:
     _schedule_broadcast(data)
 
 
@@ -70,9 +89,12 @@ def create_app(controller: BotController) -> FastAPI:
         yield
 
     app = FastAPI(title="Noa Auto", lifespan=_lifespan)
+    app.add_middleware(NoCacheStaticMiddleware)
 
     controller.on_log_event(broadcast_log)
     controller.on_state_event(broadcast_state)
+    controller.on_frame_event(broadcast_frame)
+    controller.on_config_event(broadcast_config)
 
     @app.get("/")
     async def index() -> FileResponse:
@@ -84,9 +106,7 @@ def create_app(controller: BotController) -> FastAPI:
 
     @app.post("/api/start")
     async def start_bot() -> JSONResponse:
-        body = controller.get_config()
-        path = body.get("game_path", "")
-        controller.start(path)
+        controller.start()
         return JSONResponse(content={"ok": True})
 
     @app.post("/api/stop")
@@ -100,11 +120,30 @@ def create_app(controller: BotController) -> FastAPI:
 
     @app.put("/api/config")
     async def set_config(body: dict) -> JSONResponse:
-        path = body.get("game_path", "")
         routines = body.get("routines")
         repeat = body.get("repeat")
-        controller.set_config(game_path=path, routines=routines, repeat=repeat)
+        controller.set_config(routines=routines, repeat=repeat)
         return JSONResponse(content={"ok": True})
+
+    @app.get("/api/windows")
+    async def list_windows() -> JSONResponse:
+        result = controller.game_launcher.list_visible_windows()
+        return JSONResponse(content={"windows": result})
+
+    @app.get("/api/preview")
+    async def get_preview() -> JSONResponse:
+        return JSONResponse(content=controller.get_preview())
+
+    @app.post("/api/preview")
+    async def set_preview(body: dict) -> JSONResponse:
+        enabled = bool(body.get("enabled", False))
+        mode = body.get("mode")
+        ok = controller.set_preview(enabled)
+        if not ok:
+            return JSONResponse(status_code=503, content={"error": "Screen bot not available"})
+        if isinstance(mode, str):
+            controller.set_preview_mode(mode)
+        return JSONResponse(content=controller.get_preview())
 
     @app.get("/api/browse")
     async def browse_path(path: str = "") -> JSONResponse:
@@ -113,7 +152,54 @@ def create_app(controller: BotController) -> FastAPI:
 
     @app.get("/api/routines")
     async def list_routines() -> JSONResponse:
+        refresh_routines()
         return JSONResponse(content=controller.get_routines())
+
+    @app.get("/api/plan/{name}")
+    async def get_plan_data(name: str) -> JSONResponse:
+        try:
+            data = get_plan(name)
+        except Exception as e:
+            return JSONResponse(status_code=400, content={"error": str(e)})
+        if data is None:
+            return JSONResponse(status_code=404, content={"error": "Plan not found"})
+        return JSONResponse(content=data)
+
+    @app.post("/api/plan")
+    async def save_plan_data(body: dict) -> JSONResponse:
+        name = body.get("name", "")
+        try:
+            save_plan(name, body)
+            refresh_routines()
+        except Exception as e:
+            return JSONResponse(status_code=400, content={"error": str(e)})
+        return JSONResponse(
+            content={"ok": True, "name": name, "routines": list(ROUTINES.keys())}
+        )
+
+    @app.put("/api/plan/{name}")
+    async def update_plan_data(name: str, body: dict) -> JSONResponse:
+        try:
+            if get_plan(name) is None:
+                return JSONResponse(status_code=404, content={"error": "Plan not found"})
+            save_plan(name, body)
+            refresh_routines()
+        except Exception as e:
+            return JSONResponse(status_code=400, content={"error": str(e)})
+        return JSONResponse(
+            content={"ok": True, "name": name, "routines": list(ROUTINES.keys())}
+        )
+
+    @app.delete("/api/plan/{name}")
+    async def delete_plan_data(name: str) -> JSONResponse:
+        try:
+            deleted = delete_plan(name)
+        except Exception as e:
+            return JSONResponse(status_code=400, content={"error": str(e)})
+        if not deleted:
+            return JSONResponse(status_code=404, content={"error": "Plan not found"})
+        refresh_routines()
+        return JSONResponse(content={"ok": True, "routines": list(ROUTINES.keys())})
 
     @app.websocket("/ws")
     async def ws_endpoint(ws: WebSocket) -> None:

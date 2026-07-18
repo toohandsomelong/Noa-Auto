@@ -9,39 +9,75 @@
 <body>
 
 <div id="app">
-  <div class="path-row">
-    <label>Game Path:</label>
-    <input type="text" id="path-input" placeholder="D:/path/to/game.exe">
-    <button id="browse-btn">Browse</button>
-  </div>
-
-  <div class="control-row">
-    <label>Status:</label>
-    <span id="status-label" class="status-idle">IDLE</span>
-    <button id="start-btn" class="btn-start">&#9654; Start</button>
-    <button id="stop-btn" class="btn-stop" disabled>&#9632; Stop</button>
-  </div>
-
-  <div class="chain-section">
-    <div class="chain-column">
-      <label>Available Routines</label>
-      <div id="available-list" class="chain-list"></div>
+  <div class="app-main">
+    <div class="path-row">
+      <label>Game Path:</label>
+      <input type="text" id="path-input" readonly placeholder="(from active routine)">
     </div>
-    <div class="chain-column">
-      <label>Active Chain</label>
-      <div id="chain-list" class="chain-list"></div>
+
+    <div class="target-row">
+      <label>Tab Name:</label>
+      <input type="text" id="tab-name-input" readonly placeholder="(from active routine)">
+    </div>
+
+    <div class="control-row">
+      <label>Status:</label>
+      <span id="status-label" class="status-idle">IDLE</span>
+      <button id="start-btn" class="btn-start">&#9654; Start</button>
+      <button id="stop-btn" class="btn-stop" disabled>&#9632; Stop</button>
+    </div>
+
+    <div class="chain-section">
+      <div class="chain-column">
+        <div class="chain-header">
+          <label>Available Routines</label>
+          <button id="create-routine-btn">Create Routine</button>
+        </div>
+        <div id="available-list" class="chain-list"></div>
+      </div>
+      <div class="chain-column">
+        <label>Active Chain</label>
+        <div id="chain-list" class="chain-list"></div>
+      </div>
+    </div>
+
+    <div class="repeat-row">
+      <label>Repeat:</label>
+      <input type="number" id="repeat-input" min="1" value="1">
+    </div>
+
+    <div class="log-section">
+      <label>Log</label>
+      <pre id="log-console"></pre>
     </div>
   </div>
 
-  <div class="repeat-row">
-    <label>Repeat:</label>
-    <input type="number" id="repeat-input" min="1" value="1">
-  </div>
-
-  <div class="log-section">
-    <label>Log</label>
-    <pre id="log-console"></pre>
-  </div>
+  <aside class="app-sidebar">
+    <div class="preview-section">
+      <div class="preview-header">
+        <label>Capture Preview</label>
+        <div class="preview-controls">
+          <select id="preview-mode">
+            <option value="snapshot">Snapshot</option>
+            <option value="live">Live</option>
+          </select>
+          <label class="toggle-label">
+            <input type="checkbox" id="preview-toggle">
+            <span>Show</span>
+          </label>
+        </div>
+      </div>
+      <div class="preview-wrapper">
+        <div id="preview-live" class="preview-live hidden">
+          <img id="preview-img" alt="live capture">
+        </div>
+        <div id="preview-strip" class="preview-strip">
+          <div id="strip-list"></div>
+          <span id="preview-empty" class="preview-empty">No match captured yet</span>
+        </div>
+      </div>
+    </div>
+  </aside>
 </div>
 
 <div id="browse-modal" class="modal hidden">
@@ -57,6 +93,70 @@
   </div>
 </div>
 
+<div id="routine-editor-modal" class="modal hidden">
+  <div class="modal-content modal-wide">
+    <div class="modal-header">
+      <span id="routine-editor-title">Create Routine</span>
+      <div class="modal-header-actions">
+        <button id="routine-save-btn" class="btn-start">Save</button>
+        <button id="routine-editor-close">&times;</button>
+      </div>
+    </div>
+    <div id="routine-editor-body" class="modal-body">
+      <div class="field-row">
+        <label for="routine-name">Name</label>
+        <input type="text" id="routine-name" placeholder="my_routine">
+      </div>
+
+      <div class="section-title">Config</div>
+      <div class="field-row">
+        <label for="cfg-game-path">Tab Path(optional)</label>
+        <div class="inline-input">
+          <input type="text" id="cfg-game-path" placeholder="D:/path/to/game.exe">
+          <button id="cfg-browse-btn" class="small-btn">Browse</button>
+        </div>
+      </div>
+      <div class="field-row">
+        <label for="cfg-tab-name">Tab Name</label>
+        <input type="text" id="cfg-tab-name" placeholder="window title" list="window-options">
+      </div>
+      <div class="field-grid" id="routine-config">
+        <div class="field-cell">
+          <label for="cfg-delay">Delay</label>
+          <input type="number" id="cfg-delay" step="0.1" value="0.5">
+        </div>
+        <div class="field-cell">
+          <label for="cfg-max-step-retry">Max Step Retry</label>
+          <input type="number" id="cfg-max-step-retry" value="15">
+        </div>
+        <div class="field-cell">
+          <label for="cfg-timeout">Timeout</label>
+          <input type="number" id="cfg-timeout" step="0.5" value="15">
+        </div>
+        <div class="field-cell">
+          <label for="cfg-max-recover">Max Recover</label>
+          <input type="number" id="cfg-max-recover" value="3">
+        </div>
+      </div>
+
+      <div class="section-title">
+        Steps
+        <button id="add-step-btn" class="small-btn">Add Step</button>
+      </div>
+      <div id="routine-steps"></div>
+
+      <div class="section-title">
+        Recover Steps
+        <button id="add-recover-step-btn" class="small-btn">Add Recover Step</button>
+      </div>
+      <div id="routine-recover-steps"></div>
+
+      <div id="routine-editor-error" class="editor-error hidden"></div>
+    </div>
+  </div>
+</div>
+
+<datalist id="window-options"></datalist>
 <script src="/static/app.js"></script>
 </body>
 </html>
