@@ -59,6 +59,10 @@ def broadcast_frame(data: dict) -> None:
     _schedule_broadcast(data)
 
 
+def broadcast_config(data: dict) -> None:
+    _schedule_broadcast(data)
+
+
 def _schedule_broadcast(data: dict) -> None:
     if _loop is None:
         return
@@ -90,6 +94,7 @@ def create_app(controller: BotController) -> FastAPI:
     controller.on_log_event(broadcast_log)
     controller.on_state_event(broadcast_state)
     controller.on_frame_event(broadcast_frame)
+    controller.on_config_event(broadcast_config)
 
     @app.get("/")
     async def index() -> FileResponse:
@@ -101,9 +106,7 @@ def create_app(controller: BotController) -> FastAPI:
 
     @app.post("/api/start")
     async def start_bot() -> JSONResponse:
-        body = controller.get_config()
-        path = body.get("game_path", "")
-        controller.start(path)
+        controller.start()
         return JSONResponse(content={"ok": True})
 
     @app.post("/api/stop")
@@ -117,11 +120,15 @@ def create_app(controller: BotController) -> FastAPI:
 
     @app.put("/api/config")
     async def set_config(body: dict) -> JSONResponse:
-        path = body.get("game_path", "")
         routines = body.get("routines")
         repeat = body.get("repeat")
-        controller.set_config(game_path=path, routines=routines, repeat=repeat)
+        controller.set_config(routines=routines, repeat=repeat)
         return JSONResponse(content={"ok": True})
+
+    @app.get("/api/windows")
+    async def list_windows() -> JSONResponse:
+        result = controller.game_launcher.list_visible_windows()
+        return JSONResponse(content={"windows": result})
 
     @app.get("/api/preview")
     async def get_preview() -> JSONResponse:

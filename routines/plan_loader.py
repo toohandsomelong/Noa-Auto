@@ -180,8 +180,11 @@ def build_routine_from_plan(name: str, logger: Any) -> Routine | None:
 
 def _build_config(raw: dict[str, Any]) -> RoutineConfig:
     """Construct a :class:`RoutineConfig` from a JSON config object."""
-    allowed = ("delay", "max_step_retry", "timeout", "max_recover")
+    allowed = ("delay", "max_step_retry", "timeout", "max_recover", "game_path", "tab_name")
     kwargs = {k: raw[k] for k in allowed if k in raw and raw[k] is not None}
+    for key in ("game_path", "tab_name"):
+        if key in kwargs and isinstance(kwargs[key], str):
+            kwargs[key] = kwargs[key].strip() or None
     return RoutineConfig(**kwargs)
 
 

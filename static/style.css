@@ -64,6 +64,27 @@ body {
     font-size: 13px;
 }
 
+.target-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 4px;
+}
+
+.target-row label {
+    min-width: 80px;
+}
+
+.target-row input[type="text"] {
+    flex: 1;
+    background: #2d2d2d;
+    color: #d4d4d4;
+    border: 1px solid #555;
+    padding: 4px 8px;
+    font-family: inherit;
+    font-size: 13px;
+}
+
 .control-row {
     display: flex;
     align-items: center;
@@ -336,10 +357,15 @@ button:disabled {
     display: flex;
     align-items: center;
     justify-content: center;
+    z-index: 100;
 }
 
 .modal.hidden {
     display: none;
+}
+
+#browse-modal {
+    z-index: 110;
 }
 
 .modal-content {
@@ -438,6 +464,7 @@ button:disabled {
     display: flex;
     align-items: center;
     gap: 8px;
+    margin-bottom: 8px;
 }
 
 .field-row label {
@@ -445,7 +472,7 @@ button:disabled {
     font-weight: bold;
 }
 
-.field-row input {
+.field-row input[type="text"] {
     flex: 1;
     background: #2d2d2d;
     color: #d4d4d4;
@@ -453,6 +480,12 @@ button:disabled {
     padding: 4px 8px;
     font-family: inherit;
     font-size: 13px;
+}
+
+.field-row .inline-input {
+    flex: 1;
+    display: flex;
+    gap: 6px;
 }
 
 .section-title {
@@ -489,6 +522,10 @@ button:disabled {
     padding: 4px 6px;
     font-family: inherit;
     font-size: 13px;
+}
+
+.inline-input input[type="text"] {
+    flex: 1;
 }
 
 .small-btn {

@@ -12,8 +12,12 @@
   <div class="app-main">
     <div class="path-row">
       <label>Game Path:</label>
-      <input type="text" id="path-input" placeholder="D:/path/to/game.exe">
-      <button id="browse-btn">Browse</button>
+      <input type="text" id="path-input" readonly placeholder="(from active routine)">
+    </div>
+
+    <div class="target-row">
+      <label>Tab Name:</label>
+      <input type="text" id="tab-name-input" readonly placeholder="(from active routine)">
     </div>
 
     <div class="control-row">
@@ -105,6 +109,17 @@
       </div>
 
       <div class="section-title">Config</div>
+      <div class="field-row">
+        <label for="cfg-game-path">Tab Path(optional)</label>
+        <div class="inline-input">
+          <input type="text" id="cfg-game-path" placeholder="D:/path/to/game.exe">
+          <button id="cfg-browse-btn" class="small-btn">Browse</button>
+        </div>
+      </div>
+      <div class="field-row">
+        <label for="cfg-tab-name">Tab Name</label>
+        <input type="text" id="cfg-tab-name" placeholder="window title" list="window-options">
+      </div>
       <div class="field-grid" id="routine-config">
         <div class="field-cell">
           <label for="cfg-delay">Delay</label>
@@ -141,6 +156,7 @@
   </div>
 </div>
 
+<datalist id="window-options"></datalist>
 <script src="/static/app.js"></script>
 </body>
 </html>

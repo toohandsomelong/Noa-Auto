@@ -1,8 +1,8 @@
 const pathInput = document.getElementById("path-input");
+const tabNameInput = document.getElementById("tab-name-input");
 const statusLabel = document.getElementById("status-label");
 const startBtn = document.getElementById("start-btn");
 const stopBtn = document.getElementById("stop-btn");
-const browseBtn = document.getElementById("browse-btn");
 const availableList = document.getElementById("available-list");
 const chainList = document.getElementById("chain-list");
 const repeatInput = document.getElementById("repeat-input");
@@ -31,7 +31,13 @@ const routineEditorError = document.getElementById("routine-editor-error");
 const addStepBtn = document.getElementById("add-step-btn");
 const addRecoverStepBtn = document.getElementById("add-recover-step-btn");
 const routineSaveBtn = document.getElementById("routine-save-btn");
+const cfgGamePathInput = document.getElementById("cfg-game-path");
+const cfgTabNameInput = document.getElementById("cfg-tab-name");
+const cfgBrowseBtn = document.getElementById("cfg-browse-btn");
+const windowOptions = document.getElementById("window-options");
 const CONFIG_FIELDS = [
+    { id: "cfg-game-path", key: "game_path", type: "string" },
+    { id: "cfg-tab-name", key: "tab_name", type: "string" },
     { id: "cfg-delay", key: "delay", type: "float" },
     { id: "cfg-max-step-retry", key: "max_step_retry", type: "int" },
     { id: "cfg-timeout", key: "timeout", type: "float" },
@@ -70,6 +76,8 @@ function connect() {
         } else if (data.type === "preview_clear") {
             snapshotRows.clear();
             renderStrip();
+        } else if (data.type === "config") {
+            updateActiveTarget(data.active_target);
         }
     };
     ws.onclose = () => {
@@ -133,18 +141,28 @@ function updateState(state) {
 }
 
 function setControlsEnabled(enabled) {
+    pathInput.disabled = !enabled;
+    tabNameInput.disabled = !enabled;
     repeatInput.disabled = !enabled;
     availableList.querySelectorAll("button").forEach((b) => (b.disabled = !enabled));
     chainList.querySelectorAll("button").forEach((b) => (b.disabled = !enabled));
+}
+
+function updateActiveTarget(target) {
+    if (!target) {
+        pathInput.value = "";
+        tabNameInput.value = "";
+        return;
+    }
+    pathInput.value = target.game_path || "";
+    tabNameInput.value = target.tab_name || "";
 }
 
 async function fetchState() {
     const res = await fetch("/api/state");
     const data = await res.json();
     updateState(data.state);
-    if (data.game_path) {
-        pathInput.value = data.game_path;
-    }
+    updateActiveTarget(data.active_target);
 }
 
 async function loadPreviewState() {
@@ -194,9 +212,6 @@ function updatePreviewView() {
 async function loadConfig() {
     const res = await fetch("/api/config");
     const data = await res.json();
-    if (data.game_path) {
-        pathInput.value = data.game_path;
-    }
     activeChain = Array.isArray(data.routines) ? data.routines : [];
     if (data.repeat !== undefined) {
         repeatInput.value = String(data.repeat);
@@ -317,7 +332,6 @@ async function saveConfig() {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-            game_path: pathInput.value.trim(),
             routines: activeChain,
             repeat: repeat,
         }),
@@ -334,14 +348,12 @@ stopBtn.addEventListener("click", async () => {
     await fetch("/api/stop", { method: "POST" });
 });
 
-pathInput.addEventListener("change", saveConfig);
-
 repeatInput.addEventListener("change", () => {
     renderChain();
     saveConfig();
 });
 
-browseBtn.addEventListener("click", () => {
+cfgBrowseBtn.addEventListener("click", () => {
     browseModal.classList.remove("hidden");
     navigateBrowse("");
 });
@@ -395,11 +407,23 @@ async function navigateBrowse(path) {
     browseList.querySelectorAll(".exe").forEach((el) => {
         el.addEventListener("click", (e) => {
             e.preventDefault();
-            pathInput.value = el.dataset.path;
-            saveConfig();
+            cfgGamePathInput.value = el.dataset.path;
             browseModal.classList.add("hidden");
         });
     });
+}
+
+async function refreshWindowSuggestions() {
+    try {
+        const res = await fetch("/api/windows");
+        const data = await res.json();
+        const windows = data.windows || [];
+        windowOptions.innerHTML = windows
+            .map((w) => `<option value="${escapeHtml(w.title)}"></option>`)
+            .join("");
+    } catch (e) {
+        // ignore
+    }
 }
 
 function escapeHtml(str) {
@@ -411,7 +435,7 @@ function escapeHtml(str) {
 function newRoutineState() {
     return {
         name: "",
-        config: { delay: 0.5, max_step_retry: 15, timeout: 15.0, max_recover: 3 },
+        config: { game_path: "", tab_name: "", delay: 0.5, max_step_retry: 15, timeout: 15.0, max_recover: 3 },
         steps: [],
         recover_steps: [],
     };
@@ -503,11 +527,17 @@ function loadRoutineConfig() {
     }
 }
 
+cfgTabNameInput.addEventListener("focus", refreshWindowSuggestions);
+
 function readRoutineConfig() {
     const cfg = {};
     for (const field of CONFIG_FIELDS) {
         const el = document.getElementById(field.id);
         let value = el.value.trim();
+        if (field.type === "string") {
+            cfg[field.key] = value;
+            continue;
+        }
         if (value === "") continue;
         if (field.type === "int") {
             const parsed = parseInt(value, 10);
