@@ -14,11 +14,11 @@ from routines.target import Target
 class ClickStep(Step):
     """Step driven by an ordered list of ClickRules.  Each tick, rules are tested in
     order; the first matching rule applies.  If no rule matches, fall-through
-    handles goto_step_not_found or stuck_timeout.
+    handles goto_step_if_not_found or stuck_timeout.
 
       * ``stay_on_confirm=True`` → a blocker rule (right-click & dismiss, stay on step).
       * ``action=\"advance\"`` → match the template and advance immediately (no click).
-      * ``goto_step_not_found`` → branch index when no rule has ever matched.
+      * ``goto_step_if_not_found`` → branch index when no rule has ever matched.
       * ``ready_delay`` — grace period after (re)entry before any action.
     """
 
@@ -26,14 +26,14 @@ class ClickStep(Step):
         self,
         rules: list[Target],
         *,
-        goto_step_not_found: int | None = None,
+        goto_step_if_not_found: int | None = None,
         ready_delay: float = 0.0,
         threshold: float = 0.85,
         grayscale: bool = True,
         label: str | None = None,
     ) -> None:
         self._rules = list(rules)
-        self._goto_step_not_found = goto_step_not_found
+        self._goto_step_if_not_found = goto_step_if_not_found
         self._ready_delay = ready_delay
         self.threshold = threshold
         self.grayscale = grayscale
@@ -56,8 +56,8 @@ class ClickStep(Step):
             if result is not None:
                 return result
 
-        if self._goto_step_not_found is not None:
-            return self._goto_step_not_found
+        if self._goto_step_if_not_found is not None:
+            return self._goto_step_if_not_found
 
         return self.stuck_or_wait()
 
@@ -122,4 +122,3 @@ class ClickStep(Step):
         else:
             y = m.location[1] + m.size[1] // 2
         return (x, y)
-

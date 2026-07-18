@@ -4,7 +4,6 @@ import json
 import os
 from typing import Any
 
-from routines.branch_step import BranchStep
 from routines.click_action import ClickAction
 from routines.click_step import ClickStep
 from routines.config import RoutineConfig
@@ -205,8 +204,6 @@ def _build_step(raw: dict[str, Any]) -> Step:
     kind = raw.get("type", "click")
     if kind == "click":
         return _build_click_step(raw)
-    if kind == "branch":
-        return _build_branch_step(raw)
     raise ValueError(f"Unknown step type: {kind!r}")
 
 
@@ -216,7 +213,7 @@ def _build_click_step(raw: dict[str, Any]) -> ClickStep:
 
     return ClickStep(
         targets,
-        goto_step_not_found=raw.get("goto_step_not_found"),
+        goto_step_if_not_found=raw.get("goto_step_if_not_found"),
         ready_delay=raw.get("ready_delay", 0.0),
         threshold=raw.get("threshold", 0.85),
         grayscale=raw.get("grayscale", True),
@@ -244,15 +241,3 @@ def _target_kwargs(raw: dict[str, Any]) -> dict[str, Any]:
             kwargs[key] = raw[key]
 
     return kwargs
-
-
-def _build_branch_step(raw: dict[str, Any]) -> BranchStep:
-    """Build a :class:`BranchStep` from JSON."""
-    return BranchStep(
-        raw["template"],
-        raw["goto_found"],
-        raw["goto_step_not_found"],
-        threshold=raw.get("threshold", 0.85),
-        grayscale=raw.get("grayscale", True),
-        label=raw.get("label"),
-    )

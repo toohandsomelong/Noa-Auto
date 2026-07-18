@@ -69,7 +69,7 @@ def build_team_trials_routine(logger: Any) -> Routine:
         ),
         ClickStep(
             [Target("templates/racemenu/teamtrials/end.png", action=ClickAction.RIGHT_CLICK)],
-            goto_step_not_found=select_opponent_index,
+            goto_step_if_not_found=select_opponent_index,
         ),
         ClickStep([Target("templates/racemenu/teamtrials/smallnext.png")]),
         ClickStep([Target("templates/main/home.png")]),

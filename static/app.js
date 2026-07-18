@@ -448,7 +448,7 @@ function newClickStep() {
         threshold: 0.85,
         grayscale: true,
         ready_delay: 0.0,
-        goto_step_not_found: null,
+        goto_step_if_not_found: null,
         targets: [newClickTarget()],
     };
 }
@@ -461,18 +461,6 @@ function newClickTarget() {
         offset_y: 0,
         goto: null,
         stay_on_confirm: false,
-        threshold: 0.85,
-        grayscale: true,
-        label: null,
-    };
-}
-
-function newBranchStep() {
-    return {
-        type: "branch",
-        template: "",
-        goto_found: 0,
-        goto_step_not_found: 0,
         threshold: 0.85,
         grayscale: true,
         label: null,
@@ -572,27 +560,13 @@ function renderStepCard(step, idx, listKey) {
     header.className = "step-header";
     header.innerHTML = `<span>Step ${idx + 1}</span>`;
 
-    const typeSelect = document.createElement("select");
-    typeSelect.innerHTML = `<option value="click">click</option><option value="branch">branch</option>`;
-    typeSelect.value = step.type || "click";
-    typeSelect.addEventListener("change", () => {
-        step.type = typeSelect.value;
-        if (step.type === "click") {
-            Object.assign(step, newClickStep(), { type: "click" });
-        } else {
-            Object.assign(step, newBranchStep(), { type: "branch" });
-        }
-        refreshEditor();
-    });
-    header.appendChild(typeSelect);
-
     const upBtn = document.createElement("button");
-    upBtn.textContent = "Up";
+    upBtn.textContent = "^";
     upBtn.disabled = idx === 0;
     upBtn.addEventListener("click", () => moveStep(listKey, idx, -1));
 
     const downBtn = document.createElement("button");
-    downBtn.textContent = "Down";
+    downBtn.textContent = "v";
     downBtn.disabled = idx === routineEditorState[listKey].length - 1;
     downBtn.addEventListener("click", () => moveStep(listKey, idx, 1));
 
@@ -609,26 +583,10 @@ function renderStepCard(step, idx, listKey) {
     const body = document.createElement("div");
     body.className = "step-body";
 
-    if (step.type === "branch") {
-        body.appendChild(renderBranchFields(step));
-    } else {
-        body.appendChild(renderClickFields(step));
-    }
+    body.appendChild(renderClickFields(step));
 
     card.appendChild(body);
     return card;
-}
-
-function renderBranchFields(step) {
-    const grid = document.createElement("div");
-    grid.className = "field-grid";
-    grid.appendChild(makeInputCell("Template", step.template, (v) => (step.template = v)));
-    grid.appendChild(makeInputCell("Goto found", step.goto_found, (v) => (step.goto_found = v)));
-    grid.appendChild(makeInputCell("Goto not found", step.goto_step_not_found, (v) => (step.goto_step_not_found = v)));
-    grid.appendChild(makeInputCell("Threshold", step.threshold, (v) => (step.threshold = v)));
-    grid.appendChild(makeCheckboxCell("Grayscale", step.grayscale, (v) => (step.grayscale = v)));
-    grid.appendChild(makeInputCell("Label", step.label || "", (v) => (step.label = v || null)));
-    return grid;
 }
 
 function renderClickFields(step) {
@@ -638,7 +596,7 @@ function renderClickFields(step) {
     const topGrid = document.createElement("div");
     topGrid.className = "field-grid";
     topGrid.appendChild(makeInputCell("Ready delay", step.ready_delay, (v) => (step.ready_delay = v)));
-    topGrid.appendChild(makeInputCell("Goto not found", step.goto_step_not_found, (v) => (step.goto_step_not_found = v)));
+    topGrid.appendChild(makeInputCell("Goto step if not found", step.goto_step_if_not_found, (v) => (step.goto_step_if_not_found = v)));
     topGrid.appendChild(makeInputCell("Threshold", step.threshold, (v) => (step.threshold = v)));
     topGrid.appendChild(makeCheckboxCell("Grayscale", step.grayscale, (v) => (step.grayscale = v)));
     topGrid.appendChild(makeInputCell("Label", step.label || "", (v) => (step.label = v || null)));

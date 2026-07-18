@@ -1,21 +1,5 @@
 {
-  "name": "team_trials",
-  "config": {
-    "delay": 0.5,
-    "max_step_retry": 15,
-    "timeout": 15.0,
-    "max_recover": 3
-  },
-  "recover_steps": [
-    {
-      "type": "click",
-      "targets": [
-        {
-          "template": "templates/main/home.png"
-        }
-      ]
-    }
-  ],
+  "name": "team_trials 2",
   "steps": [
     {
       "type": "click",
@@ -52,7 +36,7 @@
     },
     {
       "type": "click",
-      "ready_delay": 3.0,
+      "ready_delay": 3,
       "targets": [
         {
           "template": "templates/racemenu/teamtrials/end.png",
@@ -140,7 +124,7 @@
     },
     {
       "type": "click",
-      "goto_step_not_found": 4,
+      "goto_step_if_not_found": 4,
       "targets": [
         {
           "template": "templates/racemenu/teamtrials/end.png",
@@ -164,5 +148,23 @@
         }
       ]
     }
-  ]
+  ],
+  "recover_steps": [
+    {
+      "type": "click",
+      "targets": [
+        {
+          "template": "templates/main/home.png"
+        }
+      ]
+    }
+  ],
+  "config": {
+    "game_path": "",
+    "tab_name": "",
+    "delay": 0.5,
+    "max_step_retry": 15,
+    "timeout": 15,
+    "max_recover": 3
+  }
 }
