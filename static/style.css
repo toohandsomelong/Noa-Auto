@@ -592,7 +592,7 @@ button:disabled {
     gap: 6px;
 }
 
-.rule-row {
+.target-row {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
@@ -602,7 +602,7 @@ button:disabled {
     border: 1px solid #3c3c3c;
 }
 
-.rule-row {
+.target-row {
     display: flex;
     flex-wrap: wrap;
     align-items: flex-end;
@@ -633,7 +633,7 @@ button:disabled {
     font-size: 12px;
 }
 
-.rule-row select {
+.target-row select {
     background: #2d2d2d;
     color: #d4d4d4;
     border: 1px solid #555;
@@ -643,7 +643,7 @@ button:disabled {
 }
 
 .mini-number {
-    width: 60px;
+    width: 80px;
     background: #2d2d2d;
     color: #d4d4d4;
     border: 1px solid #555;

@@ -1,6 +1,6 @@
-FGA-master
 _pycache__
 *.pyc
 *.log
 *.bat
 *.md
+templates

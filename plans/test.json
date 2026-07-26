@@ -1,0 +1,35 @@
+{
+  "name": "test",
+  "steps": [
+    {
+      "type": "click",
+      "label": null,
+      "threshold": 0.85,
+      "grayscale": true,
+      "ready_delay": 0,
+      "goto_step_if_not_found": null,
+      "targets": [
+        {
+          "template": "",
+          "action": "left_click",
+          "offset_x": 0,
+          "offset_y": 0,
+          "goto": null,
+          "stay_on_confirm": false,
+          "threshold": 0.85,
+          "grayscale": true,
+          "label": null,
+          "scrollValue": -100
+        }
+      ]
+    }
+  ],
+  "config": {
+    "game_path": "",
+    "tab_name": "",
+    "delay": 0.5,
+    "max_step_retry": 15,
+    "timeout": 15,
+    "max_recover": 3
+  }
+}

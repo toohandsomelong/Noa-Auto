@@ -444,11 +444,9 @@ function newRoutineState() {
 function newClickStep() {
     return {
         type: "click",
-        label: null,
         threshold: 0.85,
         grayscale: true,
         ready_delay: 0.0,
-        goto_step_if_not_found: null,
         targets: [newClickTarget()],
     };
 }
@@ -457,13 +455,12 @@ function newClickTarget() {
     return {
         template: "",
         action: "left_click",
+        scrollValue: 0,
         offset_x: 0,
         offset_y: 0,
-        goto: null,
         stay_on_confirm: false,
         threshold: 0.85,
         grayscale: true,
-        label: null,
     };
 }
 
@@ -610,7 +607,7 @@ function renderClickFields(step) {
     const targetsBox = document.createElement("div");
     targetsBox.className = "targets-box";
     (step.targets || []).forEach((target, ridx) => {
-        targetsBox.appendChild(renderRuleRow(step, target, ridx));
+        targetsBox.appendChild(renderTargetRow(step, target, ridx));
     });
     container.appendChild(targetsBox);
 
@@ -626,9 +623,9 @@ function renderClickFields(step) {
     return container;
 }
 
-function renderRuleRow(step, target, ridx) {
+function renderTargetRow(step, target, ridx) {
     const row = document.createElement("div");
-    row.className = "rule-row";
+    row.className = "target-row";
 
     const template = makeLabeledInput("Template", target.template || "", (v) => (target.template = v));
     template.querySelector("input").placeholder = "templates/...png";
@@ -644,9 +641,11 @@ function renderRuleRow(step, target, ridx) {
     actionWrap.appendChild(actionLabel);
     actionWrap.appendChild(action);
 
+    const scrollValue = makeLabeledMiniNumber("Scroll Value", target.scrollValue, (v) => (target.scrollValue = v));
     const offsetX = makeLabeledMiniNumber("Offset X", target.offset_x, (v) => (target.offset_x = v));
     const offsetY = makeLabeledMiniNumber("Offset Y", target.offset_y, (v) => (target.offset_y = v));
     const goto = makeLabeledMiniNumber("Goto", target.goto, (v) => (target.goto = v), true);
+    goto.querySelector("input").placeholder = "go to step if found";
     const threshold = makeLabeledMiniNumber("Threshold", target.threshold, (v) => (target.threshold = v), true);
 
     const stay = document.createElement("label");
@@ -672,6 +671,7 @@ function renderRuleRow(step, target, ridx) {
 
     row.appendChild(template);
     row.appendChild(actionWrap);
+    row.appendChild(scrollValue);
     row.appendChild(offsetX);
     row.appendChild(offsetY);
     row.appendChild(goto);

@@ -11,6 +11,7 @@ class Target:
         template: str,
         *,
         action: ClickAction = ClickAction.LEFT_CLICK,
+        scrollValue: int = 0,
         offset_x: int = 0,
         offset_y: int = 0,
         on_match: Callable[[], None] | None = None,
@@ -23,6 +24,7 @@ class Target:
     ) -> None:
         self.template = template
         self.action = action
+        self.scrollValue = scrollValue
         self.offset_x = offset_x
         self.offset_y = offset_y
         self.on_match = on_match

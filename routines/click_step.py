@@ -12,16 +12,6 @@ from routines.target import Target
 
 
 class ClickStep(Step):
-    """Step driven by an ordered list of ClickRules.  Each tick, rules are tested in
-    order; the first matching rule applies.  If no rule matches, fall-through
-    handles goto_step_if_not_found or stuck_timeout.
-
-      * ``stay_on_confirm=True`` → a blocker rule (right-click & dismiss, stay on step).
-      * ``action=\"advance\"`` → match the template and advance immediately (no click).
-      * ``goto_step_if_not_found`` → branch index when no rule has ever matched.
-      * ``ready_delay`` — grace period after (re)entry before any action.
-    """
-
     def __init__(
         self,
         rules: list[Target],
@@ -94,13 +84,13 @@ class ClickStep(Step):
 
         time.sleep(self.delay)
         point = self._target_point(m, target)
-        right = target.action == ClickAction.RIGHT_CLICK
-        do_click(point, right=right, label=target.label, logger=self.logger)
+        do_click(point, ClickAction=target.action, scrollValue=target.scrollValue, label=target.label, logger=self.logger)
+
         target.click_count += 1
         target.clicked = True
         self.seek_start_time = 0.0
         if log:
-            btn = "Right-clicked" if right else "Clicked"
+            btn = "Right-clicked" if target.action == ClickAction.RIGHT_CLICK else "Clicked"
             log.info(f"{btn} {target.label} ({target.click_count}) at {point}")
         self._fire(target.on_match, "on_match", target.label)
         return WAIT
