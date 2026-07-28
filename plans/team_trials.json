@@ -34,6 +34,16 @@
         {
           "template": "templates/racemenu/teamtrials/1.png",
           "label": "select team race"
+        },
+        {
+          "template": "templates/racemenu/teamtrials/next.png",
+          "action": "left_click",
+          "scrollValue": 0,
+          "offset_x": 0,
+          "offset_y": 0,
+          "stay_on_confirm": true,
+          "threshold": 0.85,
+          "grayscale": true
         }
       ]
     },

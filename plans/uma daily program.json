@@ -158,7 +158,7 @@
       "goto_step_if_not_found": null,
       "targets": [
         {
-          "template": "",
+          "template": "templates\\racemenu\\daily_program\\2-4-6_3-3-6.png",
           "action": "left_click",
           "offset_x": 0,
           "offset_y": 0,
@@ -166,7 +166,50 @@
           "stay_on_confirm": false,
           "threshold": 0.85,
           "grayscale": true,
-          "label": null
+          "label": "race!"
+        }
+      ]
+    },
+    {
+      "type": "click",
+      "label": null,
+      "threshold": 0.85,
+      "grayscale": true,
+      "ready_delay": 0,
+      "goto_step_if_not_found": null,
+      "targets": [
+        {
+          "template": "templates\\racemenu\\daily_program\\2-5_3-4.png",
+          "action": "left_click",
+          "offset_x": 0,
+          "offset_y": 0,
+          "goto": null,
+          "stay_on_confirm": false,
+          "threshold": 0.85,
+          "grayscale": true,
+          "label": "confirm",
+          "scrollValue": 0
+        }
+      ]
+    },
+    {
+      "type": "click",
+      "label": null,
+      "threshold": 0.85,
+      "grayscale": true,
+      "ready_delay": 0,
+      "goto_step_if_not_found": null,
+      "targets": [
+        {
+          "template": "templates\\racemenu\\daily_program\\2-4-6_3-3-6.png",
+          "action": "left_click",
+          "offset_x": 0,
+          "offset_y": 0,
+          "goto": null,
+          "stay_on_confirm": false,
+          "threshold": 0.85,
+          "grayscale": true,
+          "label": "race!"
         }
       ]
     },
@@ -187,49 +230,26 @@
           "stay_on_confirm": false,
           "threshold": 0.85,
           "grayscale": true,
-          "label": null
+          "label": "complete"
         }
       ]
     },
     {
       "type": "click",
-      "label": null,
       "threshold": 0.85,
       "grayscale": true,
       "ready_delay": 0,
-      "goto_step_if_not_found": null,
       "targets": [
         {
-          "template": "",
+          "template": "templates\\racemenu\\daily_program\\2-8.png",
           "action": "left_click",
+          "scrollValue": 0,
           "offset_x": 0,
           "offset_y": 0,
-          "goto": null,
           "stay_on_confirm": false,
           "threshold": 0.85,
           "grayscale": true,
-          "label": null
-        }
-      ]
-    },
-    {
-      "type": "click",
-      "label": null,
-      "threshold": 0.85,
-      "grayscale": true,
-      "ready_delay": 0,
-      "goto_step_if_not_found": null,
-      "targets": [
-        {
-          "template": "",
-          "action": "left_click",
-          "offset_x": 0,
-          "offset_y": 0,
-          "goto": null,
-          "stay_on_confirm": false,
-          "threshold": 0.85,
-          "grayscale": true,
-          "label": null
+          "label": "close"
         }
       ]
     }
