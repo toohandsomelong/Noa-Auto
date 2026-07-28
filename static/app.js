@@ -48,6 +48,7 @@ let ws = null;
 let currentBrowsePath = "";
 let availableRoutines = [];
 let routineLabels = {};
+let currentBrowseCallback = null;
 let activeChain = [];
 let isActive = false;
 let editingFilename = null;
@@ -395,6 +396,14 @@ async function navigateBrowse(path) {
         const full = path ? path + "/" + exe : exe;
         html += `<a href="#" class="browse-item exe" data-path="${escapeHtml(full)}">${escapeHtml(exe)}</a>`;
     }
+    for (const img of (data.images || [])) {
+        const full = path ? path + "/" + img : img;
+        const url = `/api/image?path=${encodeURIComponent(full)}`;
+        html += `<a href="#" class="browse-card" data-path="${escapeHtml(full)}">
+            <img src="${url}" alt="" class="browse-thumb">
+            <span class="browse-filename">${escapeHtml(img)}</span>
+        </a>`;
+    }
     browseList.innerHTML = html;
 
     browseList.querySelectorAll(".dir").forEach((el) => {
@@ -408,6 +417,17 @@ async function navigateBrowse(path) {
         el.addEventListener("click", (e) => {
             e.preventDefault();
             cfgGamePathInput.value = el.dataset.path;
+            browseModal.classList.add("hidden");
+        });
+    });
+
+    browseList.querySelectorAll(".browse-card").forEach((el) => {
+        el.addEventListener("click", (e) => {
+            e.preventDefault();
+            if (currentBrowseCallback) {
+                currentBrowseCallback(el.dataset.path);
+                currentBrowseCallback = null;
+            }
             browseModal.classList.add("hidden");
         });
     });
@@ -627,8 +647,32 @@ function renderTargetRow(step, target, ridx) {
     const row = document.createElement("div");
     row.className = "target-row";
 
-    const template = makeLabeledInput("Template", target.template || "", (v) => (target.template = v));
-    template.querySelector("input").placeholder = "templates/...png";
+    const templateWrap = document.createElement("div");
+    templateWrap.className = "labeled-field";
+    const templateLabel = document.createElement("label");
+    templateLabel.textContent = "Template";
+    const templateInline = document.createElement("div");
+    templateInline.className = "inline-input";
+    const templateInput = document.createElement("input");
+    templateInput.type = "text";
+    templateInput.placeholder = "templates/...png";
+    templateInput.value = target.template || "";
+    templateInput.addEventListener("input", () => (target.template = templateInput.value));
+    const browseImgBtn = document.createElement("button");
+    browseImgBtn.textContent = "Browse";
+    browseImgBtn.className = "small-btn";
+    browseImgBtn.addEventListener("click", () => {
+        currentBrowseCallback = (path) => {
+            target.template = path;
+            refreshEditor();
+        };
+        browseModal.classList.remove("hidden");
+        navigateBrowse("templates");
+    });
+    templateInline.appendChild(templateInput);
+    templateInline.appendChild(browseImgBtn);
+    templateWrap.appendChild(templateLabel);
+    templateWrap.appendChild(templateInline);
 
     const actionWrap = document.createElement("div");
     actionWrap.className = "labeled-field";
@@ -669,7 +713,7 @@ function renderTargetRow(step, target, ridx) {
         refreshEditor();
     });
 
-    row.appendChild(template);
+    row.appendChild(templateWrap);
     row.appendChild(actionWrap);
     row.appendChild(scrollValue);
     row.appendChild(offsetX);

@@ -150,6 +150,16 @@ def create_app(controller: BotController) -> FastAPI:
         result = controller.browse(path)
         return JSONResponse(content=result)
 
+    @app.get("/api/image")
+    async def serve_image(path: str = "") -> Response:
+        project_root = STATIC_DIR.parent
+        filepath = (project_root / path).resolve()
+        if not str(filepath).startswith(str(project_root)):
+            return JSONResponse(status_code=403, content={"error": "Access denied"})
+        if not filepath.is_file():
+            return JSONResponse(status_code=404, content={"error": "Not found"})
+        return FileResponse(filepath)
+
     @app.get("/api/routines")
     async def list_routines() -> JSONResponse:
         refresh_routines()

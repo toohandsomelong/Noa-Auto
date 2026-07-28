@@ -518,7 +518,7 @@ class BotController:
                 drive = f"{letter}:/"
                 if os.path.exists(drive):
                     drives.append(drive)
-            return {"dirs": drives, "exes": [], "parent": None}
+            return {"dirs": drives, "exes": [], "images": [], "parent": None}
 
         abs_path = os.path.abspath(path)
         if not os.path.isdir(abs_path):
@@ -527,22 +527,26 @@ class BotController:
         try:
             entries = os.listdir(abs_path)
         except PermissionError:
-            return {"dirs": [], "exes": [], "parent": abs_path}
+            return {"dirs": [], "exes": [], "images": [], "parent": abs_path}
 
+        IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".bmp"}
         dirs: list[str] = []
         exes: list[str] = []
+        images: list[str] = []
         for entry in sorted(entries, key=lambda e: e.lower()):
             full = os.path.join(abs_path, entry)
             if os.path.isdir(full):
                 dirs.append(entry)
             elif entry.lower().endswith(".exe"):
                 exes.append(entry)
+            elif os.path.splitext(entry)[1].lower() in IMAGE_EXTS:
+                images.append(entry)
 
         parent = os.path.dirname(abs_path)
         if parent == abs_path:
             parent = ""
 
-        return {"dirs": dirs, "exes": exes, "parent": parent}
+        return {"dirs": dirs, "exes": exes, "images": images, "parent": parent}
 
     def shutdown(self) -> None:
         self.stop_flush()
