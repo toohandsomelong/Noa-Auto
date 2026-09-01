@@ -6,3 +6,6 @@ templates
 plans
 test/*
 AGENTS.md
+build
+dist
+main.spec

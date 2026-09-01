@@ -68,19 +68,14 @@ buttons/UI elements you take yourself.
 
 ## Installation
 
-```bash
-git clone https://github.com/toohandsomelong/Noa-Auto.git
-cd Noa-Auto
-pip install -r requirements.txt
-```
+Download exe from https://github.com/toohandsomelong/Noa-Auto/releases
+then extract it.
 
 ## Tutorial
 
 ### 1. Launch
 
-```bash
-python main.py
-```
+Simply open exe if you download exe.
 
 Your browser opens the dashboard automatically (fallback ports: 6967, 6767).
 
