@@ -30,6 +30,10 @@ class ClickStep(Step):
         self.label = label or "step"
 
         self._ready_until = 0.0
+        self._verify_next: Callable[[int, Any], bool] | None = None
+
+    def set_verify_next(self, verifier: Callable[[int, Any], bool] | None) -> None:
+        self._verify_next = verifier
 
     def reset(self) -> None:
         super().reset()
@@ -52,9 +56,15 @@ class ClickStep(Step):
         return self.stuck_or_wait()
 
     def _apply(self, target: Target, screenshot: Any) -> int | None:
+        # #because something still save after loop back step so it not trigger retry
+        # #so we need to find that variable and reset it when it get loop back
+        # print(str(time.localtime().tm_hour) + ":" + str(time.localtime().tm_min) + ":" + str(time.localtime().tm_sec)
+        #         + " " + str(target.clicked))
+            
         thresh = target.threshold if target.threshold is not None else self.threshold
         gs = target.grayscale if target.grayscale is not None else self.grayscale
         m = match_template(screenshot, target.template, threshold=thresh, grayscale=gs)
+
         self.last_match = m
         self.last_match_label = target.label if m is not None else None
         log = self.logger
@@ -66,8 +76,11 @@ class ClickStep(Step):
                     if log:
                         log.info(f"Blocker {target.label} dismissed")
                     return None
+                next_idx = target.goto if target.goto is not None else self.index + 1
+                if self._verify_next is not None and not self._verify_next(next_idx, screenshot):
+                    return WAIT
                 self._fire(target.on_confirm, "on_confirm", target.label)
-                return target.goto if target.goto is not None else self.index + 1
+                return next_idx
             return None
 
         if target.action == ClickAction.CONTINUE:
@@ -93,6 +106,7 @@ class ClickStep(Step):
             btn = "Right-clicked" if target.action == ClickAction.RIGHT_CLICK else "Clicked"
             log.info(f"{btn} {target.label} ({target.click_count}) at {point}")
         self._fire(target.on_match, "on_match", target.label)
+        
         return WAIT
 
     @staticmethod

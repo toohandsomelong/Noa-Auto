@@ -6,9 +6,6 @@ from core.screen_bot import ScreenBot
 from web.bot_controller import BotController
 from web.server import run_server
 
-#TODO:
-#add scroll
-
 def build_screen_bot(logger, state_manager, focus_watcher):
     return ScreenBot(logger, state_manager, focus_watcher)
 

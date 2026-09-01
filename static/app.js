@@ -35,6 +35,8 @@ const cfgGamePathInput = document.getElementById("cfg-game-path");
 const cfgTabNameInput = document.getElementById("cfg-tab-name");
 const cfgBrowseBtn = document.getElementById("cfg-browse-btn");
 const windowOptions = document.getElementById("window-options");
+const templateZoom = document.getElementById("template-zoom");
+const templateZoomImg = templateZoom.querySelector("img");
 const CONFIG_FIELDS = [
     { id: "cfg-game-path", key: "game_path", type: "string" },
     { id: "cfg-tab-name", key: "tab_name", type: "string" },
@@ -455,7 +457,7 @@ function escapeHtml(str) {
 function newRoutineState() {
     return {
         name: "",
-        config: { game_path: "", tab_name: "", delay: 0.5, max_step_retry: 15, timeout: 15.0, max_recover: 3 },
+        config: { game_path: "", tab_name: "", delay: 0.5 },
         steps: [],
         recover_steps: [],
     };
@@ -466,7 +468,6 @@ function newClickStep() {
         type: "click",
         threshold: 0.85,
         grayscale: true,
-        ready_delay: 0.0,
         targets: [newClickTarget()],
     };
 }
@@ -643,9 +644,55 @@ function renderClickFields(step) {
     return container;
 }
 
+function setTargetPreview(img, path) {
+    if (!path) {
+        img.classList.add("hidden");
+        img.removeAttribute("src");
+        return;
+    }
+    img.classList.remove("hidden");
+    img.src = `/api/image?path=${encodeURIComponent(path)}`;
+}
+
+function templateBrowseStart(templatePath) {
+    const normalized = (templatePath || "").trim().replace(/\\/g, "/");
+    const slash = normalized.lastIndexOf("/");
+    if (slash <= 0) {
+        return "templates";
+    }
+    return normalized.slice(0, slash);
+}
+
+function showTemplateZoom(img) {
+    templateZoomImg.src = img.src;
+    templateZoom.classList.remove("hidden");
+}
+
+function hideTemplateZoom() {
+    templateZoom.classList.add("hidden");
+    templateZoomImg.removeAttribute("src");
+}
+
 function renderTargetRow(step, target, ridx) {
     const row = document.createElement("div");
     row.className = "target-row";
+
+    const preview = document.createElement("img");
+    preview.className = "target-preview";
+    preview.alt = "template preview";
+    preview.addEventListener("error", () => {
+        preview.classList.add("hidden");
+    });
+    preview.addEventListener("mouseenter", (e) => {
+        if (preview.classList.contains("hidden")) {
+            return;
+        }
+        e.stopPropagation();
+        showTemplateZoom(preview);
+    });
+    preview.addEventListener("mouseleave", hideTemplateZoom);
+    const updatePreview = () => setTargetPreview(preview, target.template);
+    updatePreview();
 
     const templateWrap = document.createElement("div");
     templateWrap.className = "labeled-field";
@@ -657,7 +704,10 @@ function renderTargetRow(step, target, ridx) {
     templateInput.type = "text";
     templateInput.placeholder = "templates/...png";
     templateInput.value = target.template || "";
-    templateInput.addEventListener("input", () => (target.template = templateInput.value));
+    templateInput.addEventListener("input", () => {
+        target.template = templateInput.value;
+        updatePreview();
+    });
     const browseImgBtn = document.createElement("button");
     browseImgBtn.textContent = "Browse";
     browseImgBtn.className = "small-btn";
@@ -667,7 +717,7 @@ function renderTargetRow(step, target, ridx) {
             refreshEditor();
         };
         browseModal.classList.remove("hidden");
-        navigateBrowse("templates");
+        navigateBrowse(templateBrowseStart(target.template));
     });
     templateInline.appendChild(templateInput);
     templateInline.appendChild(browseImgBtn);
@@ -713,6 +763,7 @@ function renderTargetRow(step, target, ridx) {
         refreshEditor();
     });
 
+    row.appendChild(preview);
     row.appendChild(templateWrap);
     row.appendChild(actionWrap);
     row.appendChild(scrollValue);

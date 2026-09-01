@@ -196,7 +196,6 @@
     "tab_name": "Umamusume",
     "delay": 0.5,
     "max_step_retry": 15,
-    "timeout": 15,
     "max_recover": 3
   }
 }

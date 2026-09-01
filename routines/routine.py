@@ -3,7 +3,7 @@ from __future__ import annotations
 import time
 from typing import Any
 
-from routines.base import WAIT, DONE, RECOVER
+from routines.base import WAIT, DONE, RECOVER, match_template
 from routines.config import RoutineConfig
 from routines.step import Step
 
@@ -29,6 +29,7 @@ class Routine:
             step.delay = config.delay
             step.max_step_retry = config.max_step_retry
             step.timeout = config.timeout
+            step.set_verify_next(self._steps_visible)
 
         self._recover_steps = recover_steps or []
         for i, step in enumerate(self._recover_steps):
@@ -48,6 +49,17 @@ class Routine:
     def _reset_on_enter(self, idx: int) -> None:
         if 0 <= idx < len(self.steps):
             self.steps[idx].reset()
+
+    def _steps_visible(self, idx: int, screenshot: Any) -> bool:
+        if not (0 <= idx < len(self.steps)):
+            return True
+        step = self.steps[idx]
+        for target in getattr(step, "_rules", []):
+            thresh = target.threshold if target.threshold is not None else step.threshold
+            gs = target.grayscale if target.grayscale is not None else step.grayscale
+            if match_template(screenshot, target.template, threshold=thresh, grayscale=gs) is not None:
+                return True
+        return False
 
     def current_step(self) -> Step | None:
         if self.done:
@@ -81,7 +93,11 @@ class Routine:
     def _advance_to(self, new_idx: int) -> None:
         if new_idx != self._index:
             self._reset_on_enter(new_idx)
-            if self._last_recover_index is None or new_idx > self._last_recover_index:
+            if (
+                self._last_recover_index is None
+                or new_idx > self._last_recover_index
+                or new_idx < self._index
+            ):
                 self._recover_count = 0
                 self._last_recover_index = None
         self._index = new_idx

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import time
+from collections.abc import Callable
 from typing import Any
 
 from core.match_result import MatchResult
@@ -27,6 +28,9 @@ class Step:
     def tick(self, screenshot: Any) -> int:
         return WAIT
 
+    def set_verify_next(self, verifier: Callable[[int, Any], bool] | None) -> None:
+        pass
+
     def reset(self) -> None:
         self.reset_click_state()
         self.last_match = None
@@ -45,9 +49,6 @@ class Step:
         if result is not None:
             self.last_match_label = self.label or os.path.basename(path)
         return result
-
-    def click(self, point: tuple[int, int], *, right: bool = False) -> bool:
-        return do_click(point, right=right, label=self.label, logger=self.logger)
 
     def stuck_or_wait(self, label: str | None = None) -> int:
         lbl = label or self.label
