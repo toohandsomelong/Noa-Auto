@@ -42,15 +42,26 @@ class ClickStep(Step):
         self._ready_until = time.time() + self._ready_delay
 
     def tick(self, screenshot: Any) -> int:
+        log = self.logger
         if time.time() < self._ready_until:
+            if log:
+                log.info(f"{self.log_prefix()} waiting ready_delay {self._ready_until - time.time():.2f}s")
             return WAIT
 
         for rule in self._rules:
+            if log:
+                log.info(f"{self.log_prefix()} evaluating target \"{rule.label}\" ({rule.template})")
             result = self._apply(rule, screenshot)
             if result is not None:
+                if log:
+                    log.info(f"{self.log_prefix()} target \"{rule.label}\" decided result {result}")
                 return result
+            if log:
+                log.info(f"{self.log_prefix()} target \"{rule.label}\" returned None (inconclusive)")
 
         if self._goto_step_if_not_found is not None:
+            if log:
+                log.info(f"{self.log_prefix()} no target acted - goto_step_if_not_found={self._goto_step_if_not_found}")
             return self._goto_step_if_not_found
 
         return self.stuck_or_wait()
@@ -69,6 +80,14 @@ class ClickStep(Step):
         self.last_match_label = target.label if m is not None else None
         log = self.logger
 
+        if m is not None and log:
+            log.info(
+                f"{self.log_prefix()} target \"{target.label}\": matched at "
+                f"{m.location[0]},{m.location[1]} conf={m.confidence:.2f}"
+            )
+        elif m is None and log:
+            log.info(f"{self.log_prefix()} target \"{target.label}\": NOT found")
+
         if m is None:
             if target.clicked:
                 if target.stay_on_confirm:
@@ -77,8 +96,18 @@ class ClickStep(Step):
                         log.info(f"Blocker {target.label} dismissed")
                     return None
                 next_idx = target.goto if target.goto is not None else self.index + 1
-                if self._verify_next is not None and not self._verify_next(next_idx, screenshot):
-                    return WAIT
+                if self._verify_next is not None and self._verify_next(next_idx, screenshot):
+                    if log:
+                        log.info(
+                            f"{self.log_prefix()} target \"{target.label}\": next step {next_idx} "
+                            "visible - advancing"
+                        )
+                else:
+                    if log:
+                        log.info(
+                            f"{self.log_prefix()} target \"{target.label}\": current gone, next step "
+                            f"{next_idx} not visible - treating as done (loading), advancing"
+                        )
                 self._fire(target.on_confirm, "on_confirm", target.label)
                 return next_idx
             return None
@@ -88,6 +117,12 @@ class ClickStep(Step):
                 log.info(f"{self.label}: {target.label} already satisfied, advancing")
             self._fire(target.on_match, "on_match", target.label)
             return target.goto if target.goto is not None else self.index + 1
+
+        if target.clicked and log:
+            log.info(
+                f"{self.log_prefix()} target \"{target.label}\": still visible after "
+                f"{target.click_count} clicks - re-clicking"
+            )
 
         max_step_retry = self.max_step_retry
         if max_step_retry is not None and target.click_count >= max_step_retry:
@@ -105,6 +140,7 @@ class ClickStep(Step):
         if log:
             btn = "Right-clicked" if target.action == ClickAction.RIGHT_CLICK else "Clicked"
             log.info(f"{btn} {target.label} ({target.click_count}) at {point}")
+            log.info(f"{self.log_prefix()} target \"{target.label}\": clicked - returning WAIT, awaiting confirmation")
         self._fire(target.on_match, "on_match", target.label)
         
         return WAIT

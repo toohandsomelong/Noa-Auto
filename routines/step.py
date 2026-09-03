@@ -31,7 +31,12 @@ class Step:
     def set_verify_next(self, verifier: Callable[[int, Any], bool] | None) -> None:
         pass
 
+    def log_prefix(self) -> str:
+        return f'[step {self.index} "{self.label or "step"}"]'
+
     def reset(self) -> None:
+        if self.logger is not None:
+            self.logger.info(f"{self.log_prefix()} reset")
         self.reset_click_state()
         self.last_match = None
         self.last_match_label = None
@@ -54,10 +59,16 @@ class Step:
         lbl = label or self.label
         if self.seek_start_time == 0.0:
             self.seek_start_time = time.time()
+            if self.logger is not None:
+                self.logger.info(f"{self.log_prefix()} seek_start_time initialized:")
+                self.logger.info(f"{self.log_prefix()} seeking template for step, status WAIT")
             return WAIT
         timeout = self.timeout
         if timeout is not None and time.time() - self.seek_start_time > timeout:
             if self.logger is not None:
                 self.logger.warning(f"Step {lbl} not found for {timeout}s")
+                self.logger.info(f"{self.log_prefix()} timeout exceeded, returning RECOVER")
             return RECOVER
+        if self.logger is not None:
+            self.logger.info(f"{self.log_prefix()} template not found yet, staying WAIT")
         return WAIT

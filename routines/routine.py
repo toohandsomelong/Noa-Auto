@@ -48,7 +48,17 @@ class Routine:
 
     def _reset_on_enter(self, idx: int) -> None:
         if 0 <= idx < len(self.steps):
-            self.steps[idx].reset()
+            step = self.steps[idx]
+            step.reset()
+            if self.logger is not None:
+                self.logger.info(
+                    f'[routine "{self.name}"] entering step {idx} ({step.label or "step"}) '
+                    f"targets: {self._targets_desc(step)}"
+                )
+
+    def _targets_desc(self, step: Step) -> str:
+        names = [getattr(t, "label", None) or t.template for t in getattr(step, "_rules", [])]
+        return ", ".join(names) or "none"
 
     def _steps_visible(self, idx: int, screenshot: Any) -> bool:
         if not (0 <= idx < len(self.steps)):
@@ -77,20 +87,30 @@ class Routine:
 
         cur = self.steps[self._index]
         result = cur.tick(screenshot)
+        log = self.logger
 
         if result == WAIT:
             return
         if result == DONE:
+            if log:
+                log.info(f'[routine "{self.name}"] step {self._index} returned DONE - routine finished')
             self.done = True
             return
         if result == RECOVER:
+            if log:
+                log.info(f'[routine "{self.name}"] step {self._index} returned RECOVER')
             self._recover(screenshot)
             return
+
+        if log:
+            log.info(f'[routine "{self.name}"] step {self._index} returned result {result}, advancing')
 
         if result != self._index:
             self._advance_to(result)
 
     def _advance_to(self, new_idx: int) -> None:
+        if self.logger is not None:
+            self.logger.info(f'[routine "{self.name}"] advancing step {self._index} -> {new_idx}')
         if new_idx != self._index:
             self._reset_on_enter(new_idx)
             if (

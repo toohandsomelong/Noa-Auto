@@ -140,7 +140,8 @@
           "stay_on_confirm": true
         },
         {
-          "template": "templates/racemenu/teamtrials/7.png"
+          "template": "templates/racemenu/teamtrials/7.png",
+          "goto": null
         },
         {
           "template": "templates/racemenu/teamtrials/smallnext.png",
