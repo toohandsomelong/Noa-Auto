@@ -461,15 +461,23 @@ class BotController:
             repeat = 1
         if repeat < 1:
             repeat = 1
+        check_interval = config.get("check_interval", 0.5)
+        try:
+            check_interval = float(check_interval)
+        except (TypeError, ValueError):
+            check_interval = 0.5
+        check_interval = max(0.05, min(10.0, check_interval))
         return {
             "routines": routines,
             "repeat": repeat,
+            "check_interval": check_interval,
         }
 
     def set_config(
         self,
         routines: Any = None,
         repeat: Any = None,
+        check_interval: Any = None,
     ) -> None:
         existing = self._load_config()
         if routines is not None:
@@ -484,6 +492,15 @@ class BotController:
                 repeat_value = 0
             if repeat_value > 0:
                 existing["repeat"] = repeat_value
+        if check_interval is not None:
+            try:
+                interval_value = float(check_interval)
+            except (TypeError, ValueError):
+                interval_value = 0.5
+            interval_value = max(0.05, min(10.0, interval_value))
+            existing["check_interval"] = interval_value
+            if self.screen_bot is not None:
+                self.screen_bot.check_interval = interval_value
         self._save_config(existing)
 
     def get_routines(self) -> dict:

@@ -35,9 +35,7 @@ class Target:
         self.grayscale = grayscale
         self.label = label or os.path.basename(template)
 
-        self.clicked = False
         self.click_count = 0
 
     def reset(self) -> None:
-        self.clicked = False
         self.click_count = 0

@@ -19,7 +19,6 @@ class Step:
     grayscale: bool = True
     label: str | None = None
 
-    clicked: bool = False
     click_count: int = 0
     seek_start_time: float = 0.0
     last_match: MatchResult | None = None
@@ -42,7 +41,6 @@ class Step:
         self.last_match_label = None
 
     def reset_click_state(self) -> None:
-        self.clicked = False
         self.click_count = 0
         self.seek_start_time = 0.0
 

@@ -6,6 +6,7 @@ const stopBtn = document.getElementById("stop-btn");
 const availableList = document.getElementById("available-list");
 const chainList = document.getElementById("chain-list");
 const repeatInput = document.getElementById("repeat-input");
+const captureIntervalInput = document.getElementById("capture-interval-input");
 const logConsole = document.getElementById("log-console");
 const browseModal = document.getElementById("browse-modal");
 const browseClose = document.getElementById("browse-close");
@@ -147,6 +148,7 @@ function setControlsEnabled(enabled) {
     pathInput.disabled = !enabled;
     tabNameInput.disabled = !enabled;
     repeatInput.disabled = !enabled;
+    captureIntervalInput.disabled = !enabled;
     availableList.querySelectorAll("button").forEach((b) => (b.disabled = !enabled));
     chainList.querySelectorAll("button").forEach((b) => (b.disabled = !enabled));
 }
@@ -218,6 +220,9 @@ async function loadConfig() {
     activeChain = Array.isArray(data.routines) ? data.routines : [];
     if (data.repeat !== undefined) {
         repeatInput.value = String(data.repeat);
+    }
+    if (data.check_interval !== undefined) {
+        captureIntervalInput.value = String(Math.round(data.check_interval * 1000));
     }
     renderChain();
 }
@@ -331,12 +336,14 @@ function moveChainItem(idx, delta) {
 
 async function saveConfig() {
     const repeat = Math.max(1, parseInt(repeatInput.value, 10) || 1);
+    const intervalMs = Math.max(50, parseInt(captureIntervalInput.value, 10) || 500);
     await fetch("/api/config", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
             routines: activeChain,
             repeat: repeat,
+            check_interval: intervalMs / 1000,
         }),
     });
 }
@@ -353,6 +360,10 @@ stopBtn.addEventListener("click", async () => {
 
 repeatInput.addEventListener("change", () => {
     renderChain();
+    saveConfig();
+});
+
+captureIntervalInput.addEventListener("change", () => {
     saveConfig();
 });
 

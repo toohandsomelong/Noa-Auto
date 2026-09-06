@@ -122,7 +122,10 @@ def create_app(controller: BotController) -> FastAPI:
     async def set_config(body: dict) -> JSONResponse:
         routines = body.get("routines")
         repeat = body.get("repeat")
-        controller.set_config(routines=routines, repeat=repeat)
+        check_interval = body.get("check_interval")
+        controller.set_config(
+            routines=routines, repeat=repeat, check_interval=check_interval
+        )
         return JSONResponse(content={"ok": True})
 
     @app.get("/api/windows")

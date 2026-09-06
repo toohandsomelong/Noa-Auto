@@ -220,14 +220,19 @@ class ScreenBot:
     def _run(self) -> None:
         pyautogui.FAILSAFE = True
         sct = mss.mss()
+        next_due = 0.0
         try:
             while not self._stop_event.is_set():
+                now = time.monotonic()
+                if now < next_due:
+                    time.sleep(next_due - now)
+                    continue
+                next_due = now + self.check_interval
+
                 if self.state_manager.state != BotState.RUNNING:
-                    time.sleep(self.check_interval)
                     continue
                 screenshot = _capture(sct)
                 if screenshot is None:
-                    time.sleep(self.check_interval)
                     continue
 
                 if self._routine is not None and not self._routine.done:
@@ -250,6 +255,5 @@ class ScreenBot:
                     continue
 
                 self._routine = None
-                time.sleep(self.check_interval)
         finally:
             sct.close()

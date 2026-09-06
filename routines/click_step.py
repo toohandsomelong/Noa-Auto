@@ -70,7 +70,7 @@ class ClickStep(Step):
         # #because something still save after loop back step so it not trigger retry
         # #so we need to find that variable and reset it when it get loop back
         # print(str(time.localtime().tm_hour) + ":" + str(time.localtime().tm_min) + ":" + str(time.localtime().tm_sec)
-        #         + " " + str(target.clicked))
+        #         + " " + str(target.click_count))
             
         thresh = target.threshold if target.threshold is not None else self.threshold
         gs = target.grayscale if target.grayscale is not None else self.grayscale
@@ -89,7 +89,7 @@ class ClickStep(Step):
             log.info(f"{self.log_prefix()} target \"{target.label}\": NOT found")
 
         if m is None:
-            if target.clicked:
+            if target.click_count > 0:
                 if target.stay_on_confirm:
                     target.reset()
                     if log:
@@ -118,7 +118,7 @@ class ClickStep(Step):
             self._fire(target.on_match, "on_match", target.label)
             return target.goto if target.goto is not None else self.index + 1
 
-        if target.clicked and log:
+        if target.click_count > 0 and log:
             log.info(
                 f"{self.log_prefix()} target \"{target.label}\": still visible after "
                 f"{target.click_count} clicks - re-clicking"
@@ -135,7 +135,6 @@ class ClickStep(Step):
         do_click(point, ClickAction=target.action, scrollValue=target.scrollValue, label=target.label, logger=self.logger)
 
         target.click_count += 1
-        target.clicked = True
         self.seek_start_time = 0.0
         if log:
             btn = "Right-clicked" if target.action == ClickAction.RIGHT_CLICK else "Clicked"
