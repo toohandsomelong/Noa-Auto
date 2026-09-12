@@ -79,6 +79,7 @@ class ScreenBot:
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
         self.on_routine_done: Callable[[str], None] | None = None
+        self.on_routine_abort: Callable[[str], None] | None = None
         self.on_frame: Callable[[dict], None] | None = None
         self._last_frame_ts: float = 0.0
         self._last_match_key: tuple | None = None
@@ -227,33 +228,44 @@ class ScreenBot:
                 if now < next_due:
                     time.sleep(next_due - now)
                     continue
-                next_due = now + self.check_interval
-
-                if self.state_manager.state != BotState.RUNNING:
-                    continue
-                screenshot = _capture(sct)
-                if screenshot is None:
-                    continue
-
-                if self._routine is not None and not self._routine.done:
-                    try:
-                        self._routine.tick(screenshot)
-                    except Exception as e:
-                        self.logger.error(f"Routine tick failed: {e}")
-
-                    self._maybe_broadcast_frame(screenshot)
-
-                    if self._routine is None or self._routine.done:
-                        done_routine = self._routine
-                        self._routine = None
-                        if done_routine is not None and done_routine.done:
-                            if self.on_routine_done is not None:
-                                try:
-                                    self.on_routine_done(done_routine.name)
-                                except Exception as e:
-                                    self.logger.error(f"on_routine_done failed: {e}")
-                    continue
-
-                self._routine = None
+                try:
+                    self._run_cycle(sct)
+                finally:
+                    next_due = time.monotonic() + self.check_interval
         finally:
             sct.close()
+
+    def _run_cycle(self, sct: Any) -> None:
+        if self.state_manager.state != BotState.RUNNING:
+            return
+        screenshot = _capture(sct)
+        if screenshot is None:
+            return
+        if self._routine is None or self._routine.done:
+            self._routine = None
+            return
+
+        try:
+            self._routine.tick(screenshot)
+        except Exception as e:
+            self.logger.error(f"Routine tick failed: {e}")
+        self._maybe_broadcast_frame(screenshot)
+
+        if self._routine is not None and not self._routine.done:
+            return
+        done_routine = self._routine
+        self._routine = None
+        if done_routine is not None:
+            self._notify_routine_finished(done_routine)
+
+    def _notify_routine_finished(self, routine: Any) -> None:
+        if routine.aborted:
+            callback, label = self.on_routine_abort, "on_routine_abort"
+        else:
+            callback, label = self.on_routine_done, "on_routine_done"
+        if callback is None:
+            return
+        try:
+            callback(routine.name)
+        except Exception as e:
+            self.logger.error(f"{label} failed: {e}")

@@ -256,6 +256,7 @@ class BotController:
 
         if self.screen_bot is not None:
             self.screen_bot.on_routine_done = self._on_routine_done
+            self.screen_bot.on_routine_abort = self._on_routine_abort
             self.screen_bot.on_frame = self._on_frame
             self.screen_bot.start()
             self._kickoff_chain()
@@ -317,6 +318,7 @@ class BotController:
 
         if self.screen_bot is not None:
             self.screen_bot.on_routine_done = self._on_routine_done
+            self.screen_bot.on_routine_abort = self._on_routine_abort
             self.screen_bot.on_frame = self._on_frame
             self.screen_bot.start()
             self._kickoff_chain()
@@ -411,6 +413,11 @@ class BotController:
                 return
 
         self.logger.state("Chain complete")
+        threading.Thread(target=self._cleanup, daemon=True).start()
+
+    def _on_routine_abort(self, name: str) -> None:
+        self.logger.state(f"Routine '{name}' aborted — chain halted")
+        self.state_manager.state = BotState.STOPPED
         threading.Thread(target=self._cleanup, daemon=True).start()
 
     def _monitor_process(self) -> None:
