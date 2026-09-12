@@ -139,8 +139,8 @@
           <input type="number" id="cfg-timeout" step="0.5" value="15">
         </div>
         <div class="field-cell">
-          <label for="cfg-max-recover">Max Recover</label>
-          <input type="number" id="cfg-max-recover" value="3">
+          <label for="cfg-resync-timeout">Resync Timeout</label>
+          <input type="number" id="cfg-resync-timeout" step="0.5" placeholder="never">
         </div>
       </div>
 
@@ -153,12 +153,13 @@
       <button id="add-step-btn" class="small-btn">Add Step</button>
 
       <div class="section-title">
-        Recover Steps
+        Interrupt Steps
       </div>
-      
-      <div id="routine-recover-steps"></div>
-      
-      <button id="add-recover-step-btn" class="small-btn">Add Recover Step</button>
+      <p class="section-hint">Checked every tick, regardless of the current step. Use for dialogs/popups (put network/retry first).</p>
+
+      <div id="routine-interrupt-steps"></div>
+
+      <button id="add-interrupt-step-btn" class="small-btn">Add Interrupt Step</button>
 
       <div id="routine-editor-error" class="editor-error hidden"></div>
     </div>

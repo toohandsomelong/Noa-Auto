@@ -529,6 +529,12 @@ button:disabled {
     justify-content: space-between;
 }
 
+.section-hint {
+    margin: 0 0 8px 0;
+    color: #888;
+    font-size: 0.85em;
+}
+
 .field-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));

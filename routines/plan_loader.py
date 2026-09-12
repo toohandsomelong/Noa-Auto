@@ -107,13 +107,13 @@ def save_plan(name: str, data: dict[str, Any]) -> str:
         except Exception as e:
             raise ValueError(f"Invalid step at index {i}: {e}")
 
-    recover_steps = data.get("recover_steps", [])
-    if isinstance(recover_steps, list):
-        for i, raw_step in enumerate(recover_steps):
+    interrupt_steps = data.get("interrupt_steps", [])
+    if isinstance(interrupt_steps, list):
+        for i, raw_step in enumerate(interrupt_steps):
             try:
                 _build_step(raw_step)
             except Exception as e:
-                raise ValueError(f"Invalid recover step at index {i}: {e}")
+                raise ValueError(f"Invalid interrupt step at index {i}: {e}")
 
     config = data.get("config", {})
     try:
@@ -125,8 +125,8 @@ def save_plan(name: str, data: dict[str, Any]) -> str:
         "name": data.get("name") or safe_name,
         "steps": steps,
     }
-    if recover_steps:
-        output["recover_steps"] = recover_steps
+    if interrupt_steps:
+        output["interrupt_steps"] = interrupt_steps
     if config:
         output["config"] = config
 
@@ -166,20 +166,20 @@ def build_routine_from_plan(name: str, logger: Any) -> Routine | None:
 
     config = _build_config(data.get("config", {}))
     steps = _build_steps(data.get("steps", []), logger)
-    recover_steps = _build_steps(data.get("recover_steps", []), logger)
+    interrupt_steps = _build_steps(data.get("interrupt_steps", []), logger)
 
     return Routine(
         data.get("name") or name,
         steps,
         logger,
         config=config,
-        recover_steps=recover_steps or None,
+        interrupt_steps=interrupt_steps or None,
     )
 
 
 def _build_config(raw: dict[str, Any]) -> RoutineConfig:
     """Construct a :class:`RoutineConfig` from a JSON config object."""
-    allowed = ("delay", "max_step_retry", "timeout", "max_recover", "game_path", "tab_name")
+    allowed = ("delay", "max_step_retry", "timeout", "resync_timeout", "game_path", "tab_name")
     kwargs = {k: raw[k] for k in allowed if k in raw and raw[k] is not None}
     for key in ("game_path", "tab_name"):
         if key in kwargs and isinstance(kwargs[key], str):

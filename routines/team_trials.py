@@ -14,7 +14,7 @@ from routines.step import Step
 from routines.target import Target
 
 
-CONFIG = RoutineConfig(delay=0.5, max_step_retry=15, timeout=15.0, max_recover=3)
+CONFIG = RoutineConfig(delay=0.5, max_step_retry=15, timeout=15.0)
 
 def build_team_trials_routine(logger: Any) -> Routine:
     select_opponent_index = 4
@@ -75,8 +75,4 @@ def build_team_trials_routine(logger: Any) -> Routine:
         ClickStep([Target("templates/main/home.png")]),
     ]
 
-    recover_steps: list[Step] = [
-        ClickStep([Target("templates/main/home.png")]),
-    ]
-
-    return Routine("team_trials", steps, logger, config=CONFIG, recover_steps=recover_steps)
+    return Routine("team_trials", steps, logger, config=CONFIG)

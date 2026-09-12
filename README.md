@@ -39,8 +39,8 @@ a browser dashboard, with **no coding required**.
 - 🧩 **No-code routines ("plans")** — automations are simple JSON files. Create and
   edit them in the built-in editor, or by hand.
 - 🔀 **Control flow** — jump between steps (`goto`), loop steps, fallback targets,
-  and automatic **recover steps** that bring the app back to a known state when
-  something unexpected happens.
+  and global **interrupt steps** that dismiss popups on any screen plus
+  automatic screen re-anchoring (**resync**) when something unexpected happens.
 - ⛓️ **Chaining & repeat** — queue multiple routines in a chain and repeat the
   whole chain N times.
 - 🚀 **Auto game launch / window attach** — set a game path and window title;
@@ -52,7 +52,8 @@ a browser dashboard, with **no coding required**.
 1. **Capture** — one `mss` screenshot of the screen per cycle.
 2. **Match** — each step looks for its template images on screen.
 3. **Act** — on a match, it clicks (left/right, with offsets) and advances to
-   the next step, jumps via `goto`, or runs recover steps if things go wrong.
+   the next step or jumps via `goto`. Interrupt steps (popups) are checked first
+   every cycle; a stuck step triggers resync to a visible screen.
 
 A **routine** = ordered list of **steps**; a **step** = list of **targets**
 (template image + what to do when found). Templates are just PNG crops of
@@ -132,9 +133,9 @@ happening in real time. Hit **Stop** anytime.
 | Key | Type | Default | Description |
 |---|---|---|---|
 | `delay` | float | `0.0` | Pause after each step's action |
-| `timeout` | float | `15.0` | Seconds stuck on one step before recover (`null` = disabled) |
-| `max_step_retry` | int | `15` | Retries before recover (`null` = disabled) |
-| `max_recover` | int | `3` | Recover attempts before the routine aborts |
+| `timeout` | float | `15.0` | Seconds stuck on one step before resync (`null` = disabled) |
+| `max_step_retry` | int | `15` | Retries before resync (`null` = disabled) |
+| `resync_timeout` | float | `null` | Seconds to scan for a resume screen before aborting (`null` = poll forever) |
 | `game_path` | string | `null` | Exe to launch when no window is found |
 | `tab_name` | string | `null` | Window title to attach to (`null` = headless) |
 
@@ -162,9 +163,17 @@ happening in real time. Hit **Stop** anytime.
 | `grayscale` | bool | step's | Per-target grayscale |
 | `label` | string | — | Display name in logs |
 
-**Recover steps** — optional `recover_steps` list. When a step hits
-`timeout` / `max_step_retry`, recover steps run (e.g. click the Home button to
-reset the UI), then the routine restarts from step 0. Aborts after `max_recover`.
+**Interrupt steps** — optional `interrupt_steps` list. Each entry is a normal
+click step, but it is checked on **every tick regardless of the current step**
+(use it for dialogs/popups that can appear anywhere). Interrupts never advance
+the routine, and list order is priority — put network/retry first. A popup that
+only ever appears on one screen is better modeled as a target inside that step.
+
+When a step hits `timeout` / `max_step_retry`, the routine enters **resync**: it
+scans for the next step whose targets are visible (forward successors first, the
+stuck step only as a last resort) and resumes there after seeing it on two
+consecutive frames. With `resync_timeout = null` it polls forever; set a value
+to abort instead.
 
 ## Tuning & troubleshooting
 
@@ -173,10 +182,10 @@ reset the UI), then the routine restarts from step 0. Aborts after `max_recover`
 | Bot never matches | Lower `threshold` (0.8 → 0.75); re-capture template at current resolution/scale |
 | Bot clicks wrong spot | Template matched a similar element — raise `threshold` or use a tighter crop |
 | Wrong window / nothing happens | The target window must be visible on screen, not minimized or covered |
-| Flow gets stuck on random popups | Add the popup's button as an extra target or a recover step |
+| Flow gets stuck on random popups | Add the popup's button as a target, or as an interrupt step for popups that appear anywhere |
 | Too fast / misses animations | Increase `delay` / `ready_delay` |
 | Dashboard doesn't open | App already running (single-instance), or ports 6969/6967/6767 are busy |
-| Routine stuck without recovering | `timeout` / `max_step_retry` disabled (`null`)? Re-enable them |
+| Routine stuck without resyncing | `timeout` / `max_step_retry` disabled (`null`)? Re-enable them |
 
 ## Project structure
 

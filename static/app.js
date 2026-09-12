@@ -27,10 +27,10 @@ const routineEditorClose = document.getElementById("routine-editor-close");
 const routineEditorTitle = document.getElementById("routine-editor-title");
 const routineNameInput = document.getElementById("routine-name");
 const routineSteps = document.getElementById("routine-steps");
-const routineRecoverSteps = document.getElementById("routine-recover-steps");
+const routineInterruptSteps = document.getElementById("routine-interrupt-steps");
 const routineEditorError = document.getElementById("routine-editor-error");
 const addStepBtn = document.getElementById("add-step-btn");
-const addRecoverStepBtn = document.getElementById("add-recover-step-btn");
+const addInterruptStepBtn = document.getElementById("add-interrupt-step-btn");
 const routineSaveBtn = document.getElementById("routine-save-btn");
 const cfgGamePathInput = document.getElementById("cfg-game-path");
 const cfgTabNameInput = document.getElementById("cfg-tab-name");
@@ -44,7 +44,7 @@ const CONFIG_FIELDS = [
     { id: "cfg-delay", key: "delay", type: "float" },
     { id: "cfg-max-step-retry", key: "max_step_retry", type: "int" },
     { id: "cfg-timeout", key: "timeout", type: "float" },
-    { id: "cfg-max-recover", key: "max_recover", type: "int" },
+    { id: "cfg-resync-timeout", key: "resync_timeout", type: "float" },
 ];
 
 let ws = null;
@@ -470,7 +470,7 @@ function newRoutineState() {
         name: "",
         config: { game_path: "", tab_name: "", delay: 0.5 },
         steps: [],
-        recover_steps: [],
+        interrupt_steps: [],
     };
 }
 
@@ -512,8 +512,8 @@ async function openRoutineEditor(name) {
         if (!Array.isArray(routineEditorState.steps)) {
             routineEditorState.steps = [];
         }
-        if (!Array.isArray(routineEditorState.recover_steps)) {
-            routineEditorState.recover_steps = [];
+        if (!Array.isArray(routineEditorState.interrupt_steps)) {
+            routineEditorState.interrupt_steps = [];
         }
         routineEditorTitle.textContent = "Edit Routine";
     } else {
@@ -525,7 +525,7 @@ async function openRoutineEditor(name) {
     routineNameInput.value = routineEditorState.name || "";
     loadRoutineConfig();
     renderRoutineSteps();
-    renderRoutineRecoverSteps();
+    renderRoutineInterruptSteps();
     hideRoutineError();
     routineEditorModal.classList.remove("hidden");
 }
@@ -574,10 +574,10 @@ function renderRoutineSteps() {
     });
 }
 
-function renderRoutineRecoverSteps() {
-    routineRecoverSteps.innerHTML = "";
-    routineEditorState.recover_steps.forEach((step, idx) => {
-        routineRecoverSteps.appendChild(renderStepCard(step, idx, "recover_steps"));
+function renderRoutineInterruptSteps() {
+    routineInterruptSteps.innerHTML = "";
+    routineEditorState.interrupt_steps.forEach((step, idx) => {
+        routineInterruptSteps.appendChild(renderStepCard(step, idx, "interrupt_steps"));
     });
 }
 
@@ -886,7 +886,7 @@ function refreshEditor() {
     routineEditorState.config = readRoutineConfig();
     routineEditorState.name = routineNameInput.value.trim();
     renderRoutineSteps();
-    renderRoutineRecoverSteps();
+    renderRoutineInterruptSteps();
 }
 
 function showRoutineError(msg) {
@@ -912,8 +912,8 @@ async function saveRoutine() {
         config: routineEditorState.config,
         steps: routineEditorState.steps,
     };
-    if (routineEditorState.recover_steps && routineEditorState.recover_steps.length) {
-        body.recover_steps = routineEditorState.recover_steps;
+    if (routineEditorState.interrupt_steps && routineEditorState.interrupt_steps.length) {
+        body.interrupt_steps = routineEditorState.interrupt_steps;
     }
 
     const isEdit = editingFilename !== null;
@@ -960,8 +960,8 @@ addStepBtn.addEventListener("click", () => {
     routineEditorState.steps.push(newClickStep());
     refreshEditor();
 });
-addRecoverStepBtn.addEventListener("click", () => {
-    routineEditorState.recover_steps.push(newClickStep());
+addInterruptStepBtn.addEventListener("click", () => {
+    routineEditorState.interrupt_steps.push(newClickStep());
     refreshEditor();
 });
 routineEditorModal.addEventListener("click", (e) => {
