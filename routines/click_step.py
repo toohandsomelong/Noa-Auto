@@ -4,6 +4,7 @@ import time
 from typing import Any, Callable
 
 from core.match_result import MatchResult
+from core.screen_bot import get_capture_origin
 
 from routines.base import WAIT, RECOVER, match_template, do_click
 from routines.step import Step
@@ -172,9 +173,10 @@ class ClickStep(Step):
 
     @staticmethod
     def _target_point(m: MatchResult, target: Target) -> tuple[int, int]:
-        x = m.location[0] + m.size[0] // 2 + target.offset_x
+        ox, oy = get_capture_origin()
+        x = m.location[0] + m.size[0] // 2 + target.offset_x + ox
         if target.offset_y:
-            y = m.location[1] + m.size[1] + target.offset_y
+            y = m.location[1] + m.size[1] + target.offset_y + oy
         else:
-            y = m.location[1] + m.size[1] // 2
+            y = m.location[1] + m.size[1] // 2 + oy
         return (x, y)

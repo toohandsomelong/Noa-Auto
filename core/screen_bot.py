@@ -13,22 +13,41 @@ import cv2
 import mss
 import numpy as np
 import pyautogui
+import win32gui
 
 from core.match_result import MatchResult
 from core.state_manager import BotState, StateManager
 
 logger = logging.getLogger(__name__)
 
-def _capture(sct: Any | None = None) -> Any | None:
+_CAPTURE_ORIGIN: tuple[int, int] = (0, 0)
+
+
+def set_capture_origin(x: int, y: int) -> None:
+    """Set the screen-space origin of the current capture region.
+
+    Matches are found in capture-space coordinates; callers must add this
+    origin before passing click points to ``do_click``.
+    """
+    global _CAPTURE_ORIGIN
+    _CAPTURE_ORIGIN = (x, y)
+
+
+def get_capture_origin() -> tuple[int, int]:
+    return _CAPTURE_ORIGIN
+
+
+def _capture(sct: Any | None = None, region: dict[str, int] | None = None) -> Any | None:
     close_on_exit = sct is None
     sct = sct or mss.mss()
     try:
-        img = sct.grab(sct.monitors[0]) # type: ignore
+        region = region or sct.monitors[0]
+        img = sct.grab(region)  # type: ignore
         bgr = np.array(img)[:, :, :3][:, :, ::-1]
         return bgr
     finally:
         if close_on_exit:
-            sct.close() # type: ignore
+            sct.close()  # type: ignore
 
 
 @lru_cache(maxsize=128)
@@ -83,6 +102,7 @@ class ScreenBot:
         self.on_frame: Callable[[dict], None] | None = None
         self._last_frame_ts: float = 0.0
         self._last_match_key: tuple | None = None
+        self._capture_unavailable_logged: bool = False
 
     def start_routine(self, routine: Any) -> None:
         self._routine = routine
@@ -235,10 +255,50 @@ class ScreenBot:
         finally:
             sct.close()
 
+    def _resolve_region(
+        self, sct: Any
+    ) -> tuple[dict[str, int], tuple[int, int]] | None:
+        """Return the MSS region dict and its screen-space origin.
+
+        If a target window handle is available, capture its client area so the
+        bot only sees game content and clicks land inside the window even when
+        it is not at (0, 0).  Otherwise fall back to the full virtual screen.
+        """
+        if self.focus_watcher is None:
+            mon = sct.monitors[0]
+            return mon, (mon["left"], mon["top"])
+
+        hwnd = getattr(self.focus_watcher, "hwnd", None)
+        if not hwnd:
+            mon = sct.monitors[0]
+            return mon, (mon["left"], mon["top"])
+
+        try:
+            if not win32gui.IsWindow(hwnd) or win32gui.IsIconic(hwnd):
+                return None
+            left, top = win32gui.ClientToScreen(hwnd, (0, 0))
+            _, _, width, height = win32gui.GetClientRect(hwnd)
+            if width <= 0 or height <= 0:
+                return None
+            region = {"left": left, "top": top, "width": width, "height": height}
+            return region, (left, top)
+        except Exception as e:
+            self.logger.error(f"Failed to resolve capture region for hwnd {hwnd}: {e}")
+            return None
+
     def _run_cycle(self, sct: Any) -> None:
         if self.state_manager.state != BotState.RUNNING:
             return
-        screenshot = _capture(sct)
+        resolved = self._resolve_region(sct)
+        if resolved is None:
+            if not self._capture_unavailable_logged:
+                self.logger.warning("Target window minimized or unavailable; pausing capture")
+                self._capture_unavailable_logged = True
+            return
+        self._capture_unavailable_logged = False
+        region, origin = resolved
+        set_capture_origin(*origin)
+        screenshot = _capture(sct, region)
         if screenshot is None:
             return
         if self._routine is None or self._routine.done:

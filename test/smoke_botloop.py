@@ -78,6 +78,9 @@ def fake_click(point: tuple[int, int], *args: object, **kwargs: object) -> bool:
 
 
 class _FakeSct:
+    def __init__(self) -> None:
+        self.monitors = [{"left": 0, "top": 0, "width": 1920, "height": 1080}]
+
     def close(self) -> None:
         pass
 
@@ -91,7 +94,7 @@ CTRL = {
 }
 
 
-def fake_capture(sct: object | None = None) -> object:
+def fake_capture(sct: object | None = None, region: object | None = None) -> object:
     FC.now += 0.02
     visible.clear()
     if CTRL["timeline"] is not None:

@@ -65,6 +65,9 @@ def fake_clock() -> FakeClock:
 
 
 class _FakeSct:
+    def __init__(self, monitors: list[dict[str, int]] | None = None) -> None:
+        self.monitors = monitors or [{"left": 0, "top": 0, "width": 1920, "height": 1080}]
+
     def close(self) -> None:
         pass
 
@@ -75,6 +78,7 @@ class FakeScreen:
         self.visible: set[str] = set()
         self.clicks: list[tuple[str, int, int]] = []
         self.captured = 0
+        self.captured_region: dict[str, int] | None = None
 
     def match(self, screenshot, path, threshold=0.85, grayscale=True):
         from core.match_result import MatchResult
@@ -87,8 +91,9 @@ class FakeScreen:
         self.clicks.append((str(kwargs.get("label")), point[0], point[1]))
         return True
 
-    def capture(self, sct=None):
+    def capture(self, sct=None, region=None):
         self.captured += 1
+        self.captured_region = region
         return "screen"
 
 
@@ -157,7 +162,7 @@ class FakeGameLauncher:
 
 class FakeFocusWatcher:
     def __init__(self) -> None:
-        self.hwnd = None
+        self.hwnd: int | None = None
         self._cb = None
 
     def set_target(self, *args, **kwargs) -> None:
@@ -241,11 +246,22 @@ class FakeWin32:
         self.windows: list[dict] = []
         self.foreground = 0
         self.children: dict = {}
+        self._rects: dict[int, dict[str, int]] = {}
+        self._iconic: set[int] = set()
 
     def add(self, hwnd: int, title: str, pid: int = 0, visible: bool = True) -> None:
         self.windows.append(
             {"hwnd": hwnd, "title": title, "pid": pid, "visible": visible}
         )
+
+    def set_rect(self, hwnd: int, left: int, top: int, width: int, height: int) -> None:
+        self._rects[hwnd] = {"left": left, "top": top, "width": width, "height": height}
+
+    def set_iconic(self, hwnd: int, iconic: bool) -> None:
+        if iconic:
+            self._iconic.add(hwnd)
+        else:
+            self._iconic.discard(hwnd)
 
     def _by_hwnd(self, hwnd):
         return next((w for w in self.windows if w["hwnd"] == hwnd), None)
@@ -274,6 +290,17 @@ class FakeWin32:
 
     def GetForegroundWindow(self):
         return self.foreground
+
+    def ClientToScreen(self, hwnd: int, point: tuple[int, int]) -> tuple[int, int]:
+        rect = self._rects.get(hwnd, {"left": 0, "top": 0})
+        return (point[0] + rect["left"], point[1] + rect["top"])
+
+    def GetClientRect(self, hwnd: int) -> tuple[int, int, int, int]:
+        rect = self._rects.get(hwnd, {"width": 0, "height": 0})
+        return (0, 0, rect["width"], rect["height"])
+
+    def IsIconic(self, hwnd: int) -> bool:
+        return hwnd in self._iconic
 
 
 @pytest.fixture
