@@ -4,8 +4,8 @@ _pycache__
 *.bat
 templates
 plans
-test/*
 AGENTS.md
 build
 dist
 main.spec
+test_pynput.py

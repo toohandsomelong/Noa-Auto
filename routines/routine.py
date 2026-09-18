@@ -68,7 +68,10 @@ class Routine:
         for target in getattr(step, "_rules", []):
             thresh = target.threshold if target.threshold is not None else step.threshold
             gs = target.grayscale if target.grayscale is not None else step.grayscale
-            if match_template(screenshot, target.template, threshold=thresh, grayscale=gs) is not None:
+            if all(
+                match_template(screenshot, path, threshold=thresh, grayscale=gs) is not None
+                for path in getattr(target, "templates", [getattr(target, "template", "")])
+            ):
                 return True
         return False
 
@@ -77,11 +80,17 @@ class Routine:
             return True
         return self._step_visible(self.steps[idx], screenshot)
 
+    def _templates_for_target(self, target: Any) -> list[str]:
+        return getattr(target, "templates", None) or [getattr(target, "template", "")]
+
     def _current_step_templates(self) -> set[str]:
         step = self.current_step()
         if step is None:
             return set()
-        return {getattr(t, "template", "") for t in getattr(step, "_rules", [])}
+        paths: set[str] = set()
+        for t in getattr(step, "_rules", []):
+            paths.update(self._templates_for_target(t))
+        return paths
 
     def _tick_interrupts(self, screenshot: Any) -> bool:
         """Tick the first visible interrupt (blocker) and short-circuit the routine.
@@ -91,7 +100,9 @@ class Routine:
         """
         current_templates = self._current_step_templates()
         for step in self._interrupt_steps:
-            step_templates = {getattr(t, "template", "") for t in getattr(step, "_rules", [])}
+            step_templates: set[str] = set()
+            for t in getattr(step, "_rules", []):
+                step_templates.update(self._templates_for_target(t))
             if step_templates & current_templates:
                 continue
             if self._step_visible(step, screenshot):
@@ -114,7 +125,9 @@ class Routine:
         return None
 
 #TODO
-#add multiple templates in a target step
+##priority fixing not match template and screen resolution
+##currently this took whole screen not just 1 monitor or window, which need to fix too
+##implement interactive test ground? this will need more research
 
     def tick(self, screenshot: Any) -> None:
         if self.done:

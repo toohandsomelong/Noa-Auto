@@ -66,15 +66,26 @@ class ClickStep(Step):
 
         return self.stuck_or_wait()
 
+
+
     def _apply(self, target: Target, screenshot: Any) -> int | None:
         # #because something still save after loop back step so it not trigger retry
         # #so we need to find that variable and reset it when it get loop back
         # print(str(time.localtime().tm_hour) + ":" + str(time.localtime().tm_min) + ":" + str(time.localtime().tm_sec)
         #         + " " + str(target.click_count))
-            
+
         thresh = target.threshold if target.threshold is not None else self.threshold
         gs = target.grayscale if target.grayscale is not None else self.grayscale
-        m = match_template(screenshot, target.template, threshold=thresh, grayscale=gs)
+        matches: list[MatchResult] = []
+        missing: list[str] = []
+        for path in target.templates:
+            mi = match_template(screenshot, path, threshold=thresh, grayscale=gs)
+            if mi is None:
+                missing.append(path)
+                break
+            matches.append(mi)
+
+        m = matches[0] if matches and not missing else None
 
         self.last_match = m
         self.last_match_label = target.label if m is not None else None
@@ -86,7 +97,13 @@ class ClickStep(Step):
                 f"{m.location[0]},{m.location[1]} conf={m.confidence:.2f}"
             )
         elif m is None and log:
-            log.info(f"{self.log_prefix()} target \"{target.label}\": NOT found")
+            if len(target.templates) > 1 and missing:
+                log.info(
+                    f"{self.log_prefix()} target \"{target.label}\": NOT found "
+                    f"(missing {len(missing)} of {len(target.templates)} templates: {', '.join(missing)})"
+                )
+            else:
+                log.info(f"{self.log_prefix()} target \"{target.label}\": NOT found")
 
         if m is None:
             if target.click_count > 0:
@@ -141,7 +158,7 @@ class ClickStep(Step):
             log.info(f"{btn} {target.label} ({target.click_count}) at {point}")
             log.info(f"{self.log_prefix()} target \"{target.label}\": clicked - returning WAIT, awaiting confirmation")
         self._fire(target.on_match, "on_match", target.label)
-        
+
         return WAIT
 
     @staticmethod

@@ -664,19 +664,9 @@ button:disabled {
 
 .target-row {
     display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 4px;
-    padding: 4px;
-    background: #252526;
-    border: 1px solid #3c3c3c;
-}
-
-.target-row {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: flex-end;
-    gap: 6px;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
     padding: 6px;
     background: #252526;
     border: 1px solid #3c3c3c;
@@ -725,6 +715,53 @@ button:disabled {
 
 .target-preview.hidden {
     display: none;
+}
+
+.template-list {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    width: 100%;
+}
+
+.template-list-label {
+    font-size: 11px;
+    color: #a9a9a9;
+}
+
+.template-items {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.target-params {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    gap: 6px;
+}
+
+.template-sub-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.template-sub-row .target-preview {
+    height: 28px;
+    max-width: 60px;
+}
+
+.template-sub-row input[type="text"] {
+    flex: 1;
+    min-width: 120px;
+    background: #2d2d2d;
+    color: #d4d4d4;
+    border: 1px solid #555;
+    padding: 3px 6px;
+    font-family: inherit;
+    font-size: 12px;
 }
 
 .mini-number {

@@ -302,6 +302,7 @@ class BotController:
             if config.get("tab_name"):
                 return
             config["tab_name"] = title
+            data["config"] = config
             save_plan(plan_name, data)
             refresh_routines()
             self.logger.info(f"Autofilled tab_name '{title}' into plan '{plan_name}'")

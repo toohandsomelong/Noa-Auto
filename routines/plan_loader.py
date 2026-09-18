@@ -223,7 +223,16 @@ def _build_click_step(raw: dict[str, Any]) -> ClickStep:
 
 def _target_kwargs(raw: dict[str, Any]) -> dict[str, Any]:
     """Map a JSON target into keyword arguments for :class:`Target`."""
-    kwargs: dict[str, Any] = {"template": raw["template"]}
+    template = raw.get("template")
+    if isinstance(template, str):
+        if not template:
+            raise ValueError("target 'template' must be a non-empty string")
+    elif isinstance(template, list):
+        if not template or not all(isinstance(t, str) and t for t in template):
+            raise ValueError("target 'template' list must be a non-empty list of non-empty strings")
+    else:
+        raise ValueError("target 'template' is required and must be a string or a list of strings")
+    kwargs: dict[str, Any] = {"template": template}
 
     if "action" in raw:
         kwargs["action"] = ClickAction(raw["action"])

@@ -684,56 +684,115 @@ function hideTemplateZoom() {
     templateZoomImg.removeAttribute("src");
 }
 
-function renderTargetRow(step, target, ridx) {
-    const row = document.createElement("div");
-    row.className = "target-row";
+function targetTemplates(target) {
+    if (Array.isArray(target.template)) return target.template.slice();
+    return target.template ? [target.template] : [""];
+}
+
+function setTargetTemplates(target, arr) {
+    let clean = (arr || []).map((p) => String(p || ""));
+    if (clean.length === 0) clean = [""];
+    if (clean.length === 1) {
+        target.template = clean[0];
+    } else {
+        target.template = clean;
+    }
+}
+
+function renderTemplateSubRow(target, path, tidx, refreshTemplates) {
+    const subRow = document.createElement("div");
+    subRow.className = "template-sub-row";
 
     const preview = document.createElement("img");
     preview.className = "target-preview";
     preview.alt = "template preview";
-    preview.addEventListener("error", () => {
-        preview.classList.add("hidden");
-    });
+    preview.addEventListener("error", () => preview.classList.add("hidden"));
     preview.addEventListener("mouseenter", (e) => {
-        if (preview.classList.contains("hidden")) {
-            return;
-        }
+        if (preview.classList.contains("hidden")) return;
         e.stopPropagation();
         showTemplateZoom(preview);
     });
     preview.addEventListener("mouseleave", hideTemplateZoom);
-    const updatePreview = () => setTargetPreview(preview, target.template);
-    updatePreview();
+    setTargetPreview(preview, path);
 
-    const templateWrap = document.createElement("div");
-    templateWrap.className = "labeled-field";
-    const templateLabel = document.createElement("label");
-    templateLabel.textContent = "Template";
-    const templateInline = document.createElement("div");
-    templateInline.className = "inline-input";
-    const templateInput = document.createElement("input");
-    templateInput.type = "text";
-    templateInput.placeholder = "templates/...png";
-    templateInput.value = target.template || "";
-    templateInput.addEventListener("input", () => {
-        target.template = templateInput.value;
-        updatePreview();
+    const input = document.createElement("input");
+    input.type = "text";
+    input.placeholder = "templates/...png";
+    input.value = path || "";
+    input.addEventListener("input", () => {
+        const arr = targetTemplates(target);
+        arr[tidx] = input.value;
+        setTargetTemplates(target, arr);
+        setTargetPreview(preview, input.value);
     });
-    const browseImgBtn = document.createElement("button");
-    browseImgBtn.textContent = "Browse";
-    browseImgBtn.className = "small-btn";
-    browseImgBtn.addEventListener("click", () => {
-        currentBrowseCallback = (path) => {
-            target.template = path;
-            refreshEditor();
+
+    const browseBtn = document.createElement("button");
+    browseBtn.textContent = "Browse";
+    browseBtn.className = "small-btn";
+    browseBtn.addEventListener("click", () => {
+        currentBrowseCallback = (selectedPath) => {
+            const arr = targetTemplates(target);
+            arr[tidx] = selectedPath;
+            setTargetTemplates(target, arr);
+            refreshTemplates();
         };
         browseModal.classList.remove("hidden");
-        navigateBrowse(templateBrowseStart(target.template));
+        navigateBrowse(templateBrowseStart(path));
     });
-    templateInline.appendChild(templateInput);
-    templateInline.appendChild(browseImgBtn);
-    templateWrap.appendChild(templateLabel);
-    templateWrap.appendChild(templateInline);
+
+    const removeBtn = document.createElement("button");
+    removeBtn.textContent = "Remove";
+    removeBtn.className = "icon-danger small-btn";
+    removeBtn.disabled = targetTemplates(target).length <= 1;
+    removeBtn.addEventListener("click", () => {
+        const arr = targetTemplates(target);
+        arr.splice(tidx, 1);
+        setTargetTemplates(target, arr);
+        refreshTemplates();
+    });
+
+    subRow.appendChild(preview);
+    subRow.appendChild(input);
+    subRow.appendChild(browseBtn);
+    subRow.appendChild(removeBtn);
+    return subRow;
+}
+
+function renderTargetRow(step, target, ridx) {
+    const row = document.createElement("div");
+    row.className = "target-row";
+
+    const templatesWrap = document.createElement("div");
+    templatesWrap.className = "template-list";
+
+    const templatesLabel = document.createElement("div");
+    templatesLabel.className = "template-list-label";
+    templatesLabel.textContent = "Templates";
+
+    const templateItems = document.createElement("div");
+    templateItems.className = "template-items";
+
+    const refreshTemplates = () => {
+        templateItems.innerHTML = "";
+        targetTemplates(target).forEach((path, tidx) => {
+            templateItems.appendChild(renderTemplateSubRow(target, path, tidx, refreshTemplates));
+        });
+    };
+
+    const addTemplateBtn = document.createElement("button");
+    addTemplateBtn.textContent = "Add Template";
+    addTemplateBtn.className = "small-btn";
+    addTemplateBtn.addEventListener("click", () => {
+        const arr = targetTemplates(target);
+        arr.push("");
+        setTargetTemplates(target, arr);
+        refreshTemplates();
+    });
+
+    templatesWrap.appendChild(templatesLabel);
+    templatesWrap.appendChild(templateItems);
+    templatesWrap.appendChild(addTemplateBtn);
+    refreshTemplates();
 
     const actionWrap = document.createElement("div");
     actionWrap.className = "labeled-field";
@@ -774,18 +833,21 @@ function renderTargetRow(step, target, ridx) {
         refreshEditor();
     });
 
-    row.appendChild(preview);
-    row.appendChild(templateWrap);
-    row.appendChild(actionWrap);
-    row.appendChild(scrollValue);
-    row.appendChild(offsetX);
-    row.appendChild(offsetY);
-    row.appendChild(goto);
-    row.appendChild(stay);
-    row.appendChild(threshold);
-    row.appendChild(grayscale);
-    row.appendChild(label);
-    row.appendChild(remove);
+    const paramsWrap = document.createElement("div");
+    paramsWrap.className = "target-params";
+    paramsWrap.appendChild(actionWrap);
+    paramsWrap.appendChild(scrollValue);
+    paramsWrap.appendChild(offsetX);
+    paramsWrap.appendChild(offsetY);
+    paramsWrap.appendChild(goto);
+    paramsWrap.appendChild(stay);
+    paramsWrap.appendChild(threshold);
+    paramsWrap.appendChild(grayscale);
+    paramsWrap.appendChild(label);
+    paramsWrap.appendChild(remove);
+
+    row.appendChild(templatesWrap);
+    row.appendChild(paramsWrap);
     return row;
 }
 

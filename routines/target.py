@@ -1,14 +1,14 @@
 from __future__ import annotations
 
 import os
-from typing import Callable
+from collections.abc import Callable
 
 from routines.click_action import ClickAction
 
 class Target:
     def __init__(
         self,
-        template: str,
+        template: str | list[str],
         *,
         action: ClickAction = ClickAction.LEFT_CLICK,
         scrollValue: int = 0,
@@ -22,7 +22,7 @@ class Target:
         grayscale: bool = True,
         label: str | None = None,
     ) -> None:
-        self.template = template
+        self.templates = self._normalize_templates(template)
         self.action = action
         self.scrollValue = scrollValue
         self.offset_x = offset_x
@@ -33,9 +33,27 @@ class Target:
         self.stay_on_confirm = stay_on_confirm
         self.threshold = threshold
         self.grayscale = grayscale
-        self.label = label or os.path.basename(template)
+        self.label = label or os.path.basename(self.templates[0])
 
         self.click_count = 0
+
+    @property
+    def template(self) -> str:
+        return self.templates[0]
+
+    @staticmethod
+    def _normalize_templates(template: str | list[str]) -> list[str]:
+        if isinstance(template, str):
+            if not template:
+                raise ValueError("target template must be a non-empty string")
+            return [template]
+        if isinstance(template, list):
+            if not template:
+                raise ValueError("target template list must be non-empty")
+            if not all(isinstance(t, str) and t for t in template):
+                raise ValueError("target template list must contain only non-empty strings")
+            return list(template)
+        raise ValueError(f"target template must be a string or list of strings, got {type(template).__name__}")
 
     def reset(self) -> None:
         self.click_count = 0
