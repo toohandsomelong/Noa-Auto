@@ -38,6 +38,9 @@ const cfgBrowseBtn = document.getElementById("cfg-browse-btn");
 const windowOptions = document.getElementById("window-options");
 const templateZoom = document.getElementById("template-zoom");
 const templateZoomImg = templateZoom.querySelector("img");
+const recordBtn = document.getElementById("record-btn");
+const addStepDashboardBtn = document.getElementById("add-step-btn-dashboard");
+const nextStepDashboardBtn = document.getElementById("next-step-btn-dashboard");
 const CONFIG_FIELDS = [
     { id: "cfg-game-path", key: "game_path", type: "string" },
     { id: "cfg-tab-name", key: "tab_name", type: "string" },
@@ -59,6 +62,8 @@ let routineEditorState = newRoutineState();
 let previewEnabled = false;
 let previewFramePending = false;
 let snapshotRows = new Map();
+let isRecording = false;
+let recordedStepCount = 0;
 
 function connect() {
     const proto = location.protocol === "https:" ? "wss" : "ws";
@@ -82,6 +87,8 @@ function connect() {
             renderStrip();
         } else if (data.type === "config") {
             updateActiveTarget(data.active_target);
+        } else if (data.type === "record") {
+            updateRecordingState(data);
         }
     };
     ws.onclose = () => {
@@ -139,8 +146,10 @@ function updateState(state) {
     statusLabel.className = "status-" + state.toLowerCase();
 
     isActive = state === "RUNNING" || state === "PAUSED";
-    startBtn.disabled = isActive;
+    startBtn.disabled = isActive || isRecording;
     stopBtn.disabled = !isActive;
+    recordBtn.disabled = isActive;
+    addStepDashboardBtn.disabled = !isRecording;
     setControlsEnabled(!isActive);
 }
 
@@ -151,6 +160,70 @@ function setControlsEnabled(enabled) {
     captureIntervalInput.disabled = !enabled;
     availableList.querySelectorAll("button").forEach((b) => (b.disabled = !enabled));
     chainList.querySelectorAll("button").forEach((b) => (b.disabled = !enabled));
+}
+
+function updateRecordingState(data) {
+    isRecording = data.state === "RECORDING";
+    recordedStepCount = data.step_count || 0;
+    const stepIndex = data.step_index || 1;
+    const targetCount = data.target_count || 0;
+    recordBtn.textContent = isRecording ? `Stop (step ${stepIndex} · ${targetCount}t)` : "Record";
+    recordBtn.classList.toggle("recording", isRecording);
+    addStepDashboardBtn.classList.toggle("hidden", !isRecording);
+    nextStepDashboardBtn.classList.toggle("hidden", !isRecording);
+    startBtn.disabled = isRecording || isActive;
+    addStepDashboardBtn.disabled = !isRecording;
+    nextStepDashboardBtn.disabled = !isRecording;
+}
+
+async function toggleRecording() {
+    if (isRecording) {
+        const res = await fetch("/api/record/stop", { method: "POST" });
+        const data = await res.json();
+        if (data.ok && data.name) {
+            appendLog(`Recorded plan '${data.name}' (${data.steps} steps)`);
+            await loadRoutines();
+            openRoutineEditor(data.name);
+        } else if (data.error) {
+            appendLog(`Record stop: ${data.error}`);
+        }
+    } else {
+        const res = await fetch("/api/record/start", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({}),
+        });
+        const data = await res.json();
+        if (!data.ok && data.error) {
+            appendLog(`Record start: ${data.error}`);
+        }
+    }
+}
+
+async function requestCrop() {
+    const res = await fetch("/api/record/crop", { method: "POST" });
+    const data = await res.json();
+    if (!data.ok && data.error) {
+        appendLog(`Add target: ${data.error}`);
+    }
+}
+
+async function requestNextStep() {
+    const res = await fetch("/api/record/next-step", { method: "POST" });
+    const data = await res.json();
+    if (!data.ok && data.error) {
+        appendLog(`Next step: ${data.error}`);
+    }
+}
+
+async function loadRecordingState() {
+    try {
+        const res = await fetch("/api/record/status");
+        const data = await res.json();
+        updateRecordingState(data);
+    } catch (e) {
+        // ignore
+    }
 }
 
 function updateActiveTarget(target) {
@@ -612,13 +685,13 @@ function renderStepCard(step, idx, listKey) {
     const body = document.createElement("div");
     body.className = "step-body";
 
-    body.appendChild(renderClickFields(step));
+    body.appendChild(renderClickFields(step, idx, listKey));
 
     card.appendChild(body);
     return card;
 }
 
-function renderClickFields(step) {
+function renderClickFields(step, idx, listKey) {
     const container = document.createElement("div");
     container.className = "click-step-body";
 
@@ -639,7 +712,7 @@ function renderClickFields(step) {
     const targetsBox = document.createElement("div");
     targetsBox.className = "targets-box";
     (step.targets || []).forEach((target, ridx) => {
-        targetsBox.appendChild(renderTargetRow(step, target, ridx));
+        targetsBox.appendChild(renderTargetRow(step, target, ridx, idx, listKey));
     });
     container.appendChild(targetsBox);
 
@@ -697,6 +770,29 @@ function setTargetTemplates(target, arr) {
     } else {
         target.template = clean;
     }
+}
+
+function findDuplicateTemplateStep(target, excludeListKey, excludeStepIdx) {
+    const paths = new Set(targetTemplates(target).filter((p) => p));
+    if (paths.size === 0) return null;
+    const lists = [
+        ["steps", routineEditorState.steps || []],
+        ["interrupt_steps", routineEditorState.interrupt_steps || []],
+    ];
+    for (const [lk, steps] of lists) {
+        for (let i = 0; i < steps.length; i++) {
+            if (lk === excludeListKey && i === excludeStepIdx) continue;
+            const otherStep = steps[i];
+            for (const otherTarget of otherStep.targets || []) {
+                for (const p of targetTemplates(otherTarget)) {
+                    if (paths.has(p)) {
+                        return { idx: i, listKey: lk, step: otherStep };
+                    }
+                }
+            }
+        }
+    }
+    return null;
 }
 
 function renderTemplateSubRow(target, path, tidx, refreshTemplates) {
@@ -758,7 +854,7 @@ function renderTemplateSubRow(target, path, tidx, refreshTemplates) {
     return subRow;
 }
 
-function renderTargetRow(step, target, ridx) {
+function renderTargetRow(step, target, ridx, stepIdx, listKey) {
     const row = document.createElement("div");
     row.className = "target-row";
 
@@ -845,6 +941,23 @@ function renderTargetRow(step, target, ridx) {
     paramsWrap.appendChild(grayscale);
     paramsWrap.appendChild(label);
     paramsWrap.appendChild(remove);
+
+    const duplicate = findDuplicateTemplateStep(target, listKey, stepIdx);
+    if (duplicate !== null) {
+        const hint = document.createElement("div");
+        hint.className = "loop-hint";
+        const labelText = duplicate.step.label || `step ${duplicate.idx + 1}`;
+        hint.textContent = `same template as ${labelText}`;
+        const makeGotoBtn = document.createElement("button");
+        makeGotoBtn.textContent = "make goto";
+        makeGotoBtn.className = "small-btn";
+        makeGotoBtn.addEventListener("click", () => {
+            target.goto = duplicate.idx;
+            refreshEditor();
+        });
+        hint.appendChild(makeGotoBtn);
+        paramsWrap.appendChild(hint);
+    }
 
     row.appendChild(templatesWrap);
     row.appendChild(paramsWrap);
@@ -1030,11 +1143,16 @@ routineEditorModal.addEventListener("click", (e) => {
     if (e.target === routineEditorModal) closeRoutineEditor();
 });
 
+recordBtn.addEventListener("click", toggleRecording);
+addStepDashboardBtn.addEventListener("click", requestCrop);
+nextStepDashboardBtn.addEventListener("click", requestNextStep);
+
 connect();
 loadConfig();
 loadRoutines();
 fetchState();
 loadPreviewState();
+loadRecordingState();
 
 previewToggle.addEventListener("change", applyPreviewSettings);
 previewMode.addEventListener("change", applyPreviewSettings);

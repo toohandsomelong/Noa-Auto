@@ -67,14 +67,7 @@ class ClickStep(Step):
 
         return self.stuck_or_wait()
 
-
-
     def _apply(self, target: Target, screenshot: Any) -> int | None:
-        # #because something still save after loop back step so it not trigger retry
-        # #so we need to find that variable and reset it when it get loop back
-        # print(str(time.localtime().tm_hour) + ":" + str(time.localtime().tm_min) + ":" + str(time.localtime().tm_sec)
-        #         + " " + str(target.click_count))
-
         thresh = target.threshold if target.threshold is not None else self.threshold
         gs = target.grayscale if target.grayscale is not None else self.grayscale
         matches: list[MatchResult] = []
@@ -107,6 +100,28 @@ class ClickStep(Step):
                 log.info(f"{self.log_prefix()} target \"{target.label}\": NOT found")
 
         if m is None:
+            if (
+                target.click_count == 0
+                and target.scrollValue != 0
+                and target.scroll_point is not None
+            ):
+                ox, oy = get_capture_origin()
+                sx, sy = target.scroll_point
+                point = (sx + ox, sy + oy)
+                if log:
+                    log.info(
+                        f"{self.log_prefix()} target \"{target.label}\": not found - "
+                        f"scrolling at {point}"
+                    )
+                do_click(
+                    point,
+                    scrollValue=target.scrollValue,
+                    ClickAction=ClickAction.SCROLL,
+                    label=target.label,
+                    logger=self.logger,
+                )
+                return None
+
             if target.click_count > 0:
                 if target.stay_on_confirm:
                     target.reset()
@@ -136,6 +151,12 @@ class ClickStep(Step):
             self._fire(target.on_match, "on_match", target.label)
             return target.goto if target.goto is not None else self.index + 1
 
+        if target.action == ClickAction.SCROLL:
+            if log:
+                log.info(f"{self.label}: {target.label} matched after scroll, advancing")
+            self._fire(target.on_match, "on_match", target.label)
+            return target.goto if target.goto is not None else self.index + 1
+
         if target.click_count > 0 and log:
             log.info(
                 f"{self.log_prefix()} target \"{target.label}\": still visible after "
@@ -150,7 +171,8 @@ class ClickStep(Step):
 
         time.sleep(self.delay)
         point = self._target_point(m, target)
-        do_click(point, ClickAction=target.action, scrollValue=target.scrollValue, label=target.label, logger=self.logger)
+        post_scroll = 0 if target.scroll_point is not None else target.scrollValue
+        do_click(point, ClickAction=target.action, scrollValue=post_scroll, label=target.label, logger=self.logger)
 
         target.click_count += 1
         self.seek_start_time = 0.0
@@ -175,8 +197,5 @@ class ClickStep(Step):
     def _target_point(m: MatchResult, target: Target) -> tuple[int, int]:
         ox, oy = get_capture_origin()
         x = m.location[0] + m.size[0] // 2 + target.offset_x + ox
-        if target.offset_y:
-            y = m.location[1] + m.size[1] + target.offset_y + oy
-        else:
-            y = m.location[1] + m.size[1] // 2 + oy
+        y = m.location[1] + m.size[1] // 2 + target.offset_y + oy
         return (x, y)

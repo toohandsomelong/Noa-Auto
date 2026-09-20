@@ -80,7 +80,21 @@ Simply open exe if you download exe.
 
 Your browser opens the dashboard automatically (fallback ports: 6967, 6767).
 
-### 2. Capture template images
+### 2. Record a routine (new)
+
+The fastest way to build a plan is the overlay recorder.
+
+1. In the dashboard, set **Tab Name** to the game window you want to capture, then click **Record** (or press **F8**). A small floating bar appears.
+2. Navigate the game to the screen you want to capture and press **F9** (or **Add step** on the bar). The game client area freeze-frames into a crop overlay.
+3. Drag a rectangle around the button/element you want to click (the **main** template). Optionally toggle **Add validation** and drag extra rectangles — they must all be visible for the step to match, but only the main one is clicked.
+4. Pick the **action**: Left / Right / Continue / Scroll. For Scroll, click the anchor point where scrolling should happen, choose Up/Down, then **Confirm**.
+5. Repeat for each screen, then press **F8** / **Stop**. The plan is saved and the editor opens pre-filled.
+
+If two steps use the exact same template, the editor shows a "make goto" hint so you can turn the later step into a loop back without re-typing indices.
+
+> ⚠️ Templates must be captured at the **same resolution & UI scale** you run at.
+
+### 3. Capture template images manually (alternative)
 
 Templates are small PNG crops of the buttons you want the bot to find.
 
@@ -88,11 +102,7 @@ Templates are small PNG crops of the buttons you want the bot to find.
 2. Crop the button/UI element out of the snapshot in any image editor.
 3. Save crops under `templates/` (e.g. `templates/mygame/start_button.png`).
 
-[ screenshot of capture preview / template cropping here ]
-
-> ⚠️ Templates must be captured at the **same resolution & UI scale** you run at.
-
-### 3. Create a routine
+### 4. Create a routine
 
 Click **Create Routine** in the dashboard and add steps via the editor,
 or drop a JSON file into `plans/` (see [Plan JSON reference](#plan-json-reference)).
@@ -112,14 +122,14 @@ Minimal example — wait for a start button, click it, then wait for the menu:
 
 [ screenshot of the routine editor here ]
 
-### 4. Configure the run
+### 5. Configure the run
 
 - **Tab Name** — title of the window to attach to (or leave empty).
 - **Game Path** — exe to launch if no window is found (optional).
 - **Active Chain** — ordered routines to run back-to-back.
 - **Repeat** — how many times to run the whole chain.
 
-### 5. Run
+### 6. Run
 
 Hit **Start**. Watch the **Log** panel and **Live** preview to see matches
 happening in real time. Hit **Stop** anytime.
@@ -154,11 +164,13 @@ happening in real time. Hit **Stop** anytime.
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `template` | string | required | PNG path (relative to repo root) |
+| `template` | string / list | required | PNG path(s). A list is AND-matched; click point uses the **first** item |
 | `action` | string | `left_click` | `left_click` / `right_click` / `continue` (match only, no click) |
 | `offset_x` / `offset_y` | int | `0` | Click offset from the match center |
 | `goto` | int | next step | Step index to jump to after this target |
 | `stay_on_confirm` | bool | `false` | Stay on this step (target can repeat) |
+| `scrollValue` | int | `0` | For scroll-until-match: scroll amount per tick (positive = up) |
+| `scroll_point` | `[x, y]` | — | For scroll-until-match: anchor point where scrolling happens |
 | `threshold` | float | step's | Per-target match confidence |
 | `grayscale` | bool | step's | Per-target grayscale |
 | `label` | string | — | Display name in logs |

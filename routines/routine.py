@@ -126,7 +126,6 @@ class Routine:
 
 #TODO
 ##priority fixing not match template and screen resolution
-##currently this took whole screen not just 1 monitor or window, which need to fix too
 ##implement interactive test ground? this will need more research
 
     def tick(self, screenshot: Any) -> None:

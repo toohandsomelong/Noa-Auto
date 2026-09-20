@@ -209,3 +209,193 @@ def test_get_config_legacy_routine_key(tmp_config, controller):
     with open(bc.CONFIG_FILE, "w", encoding="utf-8") as f:
         json.dump({"routine": "legacy_plan"}, f)
     assert controller.get_config()["routines"] == ["legacy_plan"]
+
+
+class FakeRecorder:
+    def __init__(self, *, on_toggle=None, on_crop_request=None, on_next_step=None):
+        self.state = "IDLE"
+        self.steps = []
+        self.current_targets = []
+        self._name = None
+        self._toggle_cb = on_toggle
+        self._crop_cb = on_crop_request
+        self._next_cb = on_next_step
+
+    def start(self, name=None):
+        if self.state != "IDLE":
+            return False
+        self.state = "RECORDING"
+        self._name = name
+        self.steps = []
+        self.current_targets = []
+        return True
+
+    def stop(self):
+        self.next_step()
+        if self.state == "IDLE":
+            return None
+        self.state = "IDLE"
+        if not self.steps:
+            return None
+        return {"name": self._name or "recorded", "steps": list(self.steps)}
+
+    def begin_crop(self):
+        return ("frame", {"left": 0, "top": 0, "width": 10, "height": 10})
+
+    def accept_target(self, crops, action, *, scroll_dir=None, scroll_anchor=None, offset=None):
+        target = {
+            "template": "templates/recorded/x.png",
+            "action": action,
+            "crops": len(crops),
+            "offset": offset,
+        }
+        self.current_targets.append(target)
+        return target
+
+    def next_step(self):
+        if not self.current_targets:
+            return None
+        step = {"label": f"step {len(self.steps) + 1}", "targets": list(self.current_targets)}
+        self.steps.append(step)
+        self.current_targets = []
+        return step
+
+    def status(self):
+        return {
+            "state": self.state,
+            "step_count": len(self.steps),
+            "target_count": len(self.current_targets),
+            "step_index": len(self.steps) + 1,
+        }
+
+
+class FakeOverlay:
+    def __init__(self, **kwargs):
+        self.calls = []
+
+    def start(self):
+        self.calls.append("start")
+        return True
+
+    def stop(self):
+        self.calls.append("stop")
+
+    def show_bar(self, step=1, targets=0):
+        self.calls.append(("show_bar", step, targets))
+
+    def hide_bar(self):
+        self.calls.append("hide_bar")
+
+    def request_crop(self):
+        self.calls.append("request_crop")
+
+    def show_crop(self, frame, region):
+        self.calls.append(("show_crop", region))
+
+    def hide_crop(self):
+        self.calls.append("hide_crop")
+
+    def set_counts(self, step, targets):
+        self.calls.append(("set_counts", step, targets))
+
+
+@pytest.fixture
+def patched_controller(monkeypatch, tmp_config, fake_logger, fake_game_launcher, fake_focus_watcher, fake_screen_bot):
+    from core.state_manager import StateManager
+
+    monkeypatch.setattr(bc, "Recorder", FakeRecorder)
+    monkeypatch.setattr(bc, "RecorderOverlay", FakeOverlay)
+    return bc.BotController(
+        fake_logger,
+        StateManager(),
+        fake_game_launcher,
+        fake_focus_watcher,
+        fake_screen_bot,
+    )
+
+
+def test_start_recording_refused_while_bot_active(patched_controller):
+    from core.state_manager import BotState
+
+    patched_controller.state_manager.state = BotState.RUNNING
+    result = patched_controller.start_recording()
+    assert result["ok"] is False
+
+
+def test_start_stop_recording_saves_plan(tmp_plans, tmp_config, patched_controller, fake_logger):
+    with open(bc.CONFIG_FILE, "w", encoding="utf-8") as f:
+        json.dump({"tab_name": "Game", "game_path": "C:/game.exe"}, f)
+
+    result = patched_controller.start_recording(name="my flow")
+    assert result["ok"] is True
+    assert patched_controller._recorder.state == "RECORDING"
+    assert patched_controller._overlay.calls == ["start", ("show_bar", 1, 0)]
+
+    patched_controller._recorder.accept_target(["crop"], "left_click")
+    stop_result = patched_controller.stop_recording()
+    assert stop_result["ok"] is True
+    assert stop_result["name"] == "my flow"
+    assert "hide_crop" in patched_controller._overlay.calls
+    assert "hide_bar" in patched_controller._overlay.calls
+    saved = bc.get_plan("my flow")
+    assert saved["config"]["tab_name"] is None
+    assert saved["config"]["game_path"] is None
+
+
+def test_stop_recording_with_no_steps_returns_error(patched_controller):
+    patched_controller.start_recording()
+    result = patched_controller.stop_recording()
+    assert result["ok"] is False
+
+
+def test_begin_crop_delegates(patched_controller):
+    patched_controller.start_recording()
+    result = patched_controller.begin_crop()
+    assert result["ok"] is True
+    assert patched_controller._overlay.calls[-1][0] == "show_crop"
+
+
+def test_crop_confirm_forwards_offset(patched_controller):
+    patched_controller.start_recording()
+    patched_controller._on_crop_confirm(["crop"], "left_click", None, None, (5, -3))
+    assert patched_controller._recorder.current_targets[-1]["offset"] == (5, -3)
+    assert patched_controller._overlay.calls[-1] == ("set_counts", 1, 1)
+
+
+def test_request_crop_delegates(patched_controller):
+    patched_controller.start_recording()
+    result = patched_controller.request_crop()
+    assert result["ok"] is True
+    assert patched_controller._overlay.calls[-1] == "request_crop"
+
+
+def test_next_step_delegates(patched_controller):
+    patched_controller.start_recording()
+    patched_controller._recorder.accept_target(["crop"], "left_click")
+    result = patched_controller.next_step()
+    assert result["ok"] is True
+    assert patched_controller._recorder.status()["step_count"] == 1
+    assert patched_controller._overlay.calls[-1] == ("set_counts", 2, 0)
+
+
+def test_next_step_without_targets_fails(patched_controller):
+    patched_controller.start_recording()
+    result = patched_controller.next_step()
+    assert result["ok"] is False
+
+
+def test_bot_start_stops_recording(monkeypatch, patched_controller):
+    monkeypatch.setattr(bc, "ROUTINES", {})
+    patched_controller.start_recording()
+    patched_controller._recorder.accept_target(["crop"], "left_click")
+    patched_controller.start()
+    assert patched_controller._recorder.state == "IDLE"
+
+
+def test_unique_plan_name_collision(tmp_plans, patched_controller):
+    import routines.plan_loader as pl
+
+    pl.save_plan("x", {"name": "X", "steps": [{"type": "click", "targets": [{"template": "a.png"}]}]})
+    assert patched_controller._unique_plan_name("x") == "x (2)"
+    pl.save_plan("x (2)", {"name": "X2", "steps": [{"type": "click", "targets": [{"template": "a.png"}]}]})
+    assert patched_controller._unique_plan_name("x") == "x (3)"

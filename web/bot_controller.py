@@ -12,6 +12,8 @@ from typing import Any
 from core.focus_watcher import FocusWatcher
 from core.game_launcher import GameLauncher
 from core.logger import Logger
+from core.recorder import Recorder
+from core.recorder_overlay import RecorderOverlay
 from core.screen_bot import ScreenBot
 from core.state_manager import BotState, StateManager
 from routines import ROUTINES, refresh_routines
@@ -41,9 +43,24 @@ class BotController:
         self._state_listeners: list[Callable[[dict], None]] = []
         self._frame_listeners: list[Callable[[dict], None]] = []
         self._config_listeners: list[Callable[[dict], None]] = []
+        self._record_listeners: list[Callable[[dict], None]] = []
 
         self._flush_stop = threading.Event()
         self._flush_thread: threading.Thread | None = None
+
+        self._recorder = Recorder(
+            on_toggle=self._on_record_toggle,
+            on_crop_request=self._on_record_crop_request,
+            on_next_step=self.next_step,
+        )
+        self._overlay = RecorderOverlay(
+            on_capture=self.begin_crop,
+            on_confirm=self._on_crop_confirm,
+            on_next_step=self.next_step,
+            on_stop=self._on_record_toggle,
+            logger=self.logger,
+        )
+        self._overlay_started = False
 
         self._chain: list[str] = []
         self._chain_idx: int = 0
@@ -67,6 +84,9 @@ class BotController:
 
     def on_config_event(self, listener: Callable[[dict], None]) -> None:
         self._config_listeners.append(listener)
+
+    def on_record_event(self, listener: Callable[[dict], None]) -> None:
+        self._record_listeners.append(listener)
 
     def start_flush(self) -> None:
         if self._flush_thread is not None:
@@ -128,6 +148,134 @@ class BotController:
         }
         self._emit_config()
 
+    def _broadcast_record(self) -> None:
+        data = {"type": "record", **self._recorder.status()}
+        for listener in self._record_listeners:
+            try:
+                listener(data)
+            except Exception:
+                pass
+
+    def start_recording(self, name: str | None = None) -> dict[str, Any]:
+        if self.state_manager.is_active():
+            self.logger.warning("Cannot record while bot is running")
+            return {"ok": False, "error": "bot is running"}
+        if not self._overlay_started:
+            self._overlay_started = self._overlay.start()
+            if not self._overlay_started:
+                self.logger.error("Failed to start overlay UI")
+                return {"ok": False, "error": "overlay unavailable"}
+
+        if not self._recorder.start(name=name):
+            return {"ok": False, "error": "already recording"}
+        self._overlay.show_bar(step=1, targets=0)
+        self._broadcast_record()
+        self.logger.state("RECORDING")
+        return {"ok": True, **self._recorder.status()}
+
+    def stop_recording(self) -> dict[str, Any]:
+        data = self._recorder.stop()
+        self._overlay.hide_bar()
+        self._overlay.hide_crop()
+        self._broadcast_record()
+        self.logger.state("IDLE")
+        if data is None:
+            self.logger.warning("No steps recorded")
+            return {"ok": False, "error": "no steps recorded"}
+
+        data["config"] = self._build_record_config()
+        name = self._unique_plan_name(data["name"])
+        data["name"] = name
+        try:
+            save_plan(name, data)
+            refresh_routines()
+        except Exception as e:
+            self.logger.error(f"Failed to save recorded plan: {e}")
+            return {"ok": False, "error": str(e)}
+        self.logger.info(f"Saved recorded plan '{name}' ({len(data['steps'])} steps)")
+        return {"ok": True, "name": name, "steps": len(data["steps"])}
+
+    def begin_crop(self) -> dict[str, Any]:
+        result = self._recorder.begin_crop()
+        if result is None:
+            return {"ok": False, "error": "capture unavailable"}
+        frame, region = result
+        self._overlay.show_crop(frame, region)
+        return {"ok": True}
+
+    def request_crop(self) -> dict[str, Any]:
+        self._overlay.request_crop()
+        return {"ok": True}
+
+    def next_step(self) -> dict[str, Any]:
+        step = self._recorder.next_step()
+        if step is None:
+            self.logger.warning("No targets in current step")
+            return {"ok": False, "error": "no targets in current step"}
+        self._sync_bar()
+        self._broadcast_record()
+        self.logger.info(f"Added {step['label']} ({len(step['targets'])} targets)")
+        return {"ok": True}
+
+    def get_recording_status(self) -> dict[str, Any]:
+        return self._recorder.status()
+
+    def _sync_bar(self) -> None:
+        status = self._recorder.status()
+        self._overlay.set_counts(status["step_index"], status["target_count"])
+
+    def _on_record_toggle(self) -> None:
+        if self._recorder.state == "IDLE":
+            self.start_recording()
+        else:
+            self.stop_recording()
+
+    def _on_record_crop_request(self) -> None:
+        self._overlay.request_crop()
+
+    def _on_crop_confirm(
+        self,
+        crops: list[Any],
+        action: str,
+        scroll_dir: int | None,
+        scroll_anchor: tuple[int, int] | None,
+        offset: tuple[int, int],
+    ) -> None:
+        target = self._recorder.accept_target(
+            crops,
+            action,
+            scroll_dir=scroll_dir,
+            scroll_anchor=scroll_anchor,
+            offset=offset,
+        )
+        if target is not None:
+            self._sync_bar()
+            self._broadcast_record()
+
+    def _build_record_config(self) -> dict[str, Any]:
+        return {
+            "game_path": None,
+            "tab_name": None,
+            "delay": 0.5,
+        }
+
+    def _unique_plan_name(self, name: str) -> str:
+        try:
+            if get_plan(name) is None:
+                return name
+        except Exception:
+            pass
+        base = name
+        i = 2
+        while True:
+            candidate = f"{base} ({i})"
+            try:
+                if get_plan(candidate) is None:
+                    return candidate
+            except Exception:
+                pass
+            i += 1
+
     def set_preview(self, enabled: bool) -> bool:
         if self.screen_bot is None:
             return False
@@ -160,6 +308,8 @@ class BotController:
         if self.state_manager.is_active():
             self.logger.warning("Game already running")
             return
+        if self._recorder.state != "IDLE":
+            self.stop_recording()
 
         config = self.get_config()
         routines = config.get("routines", [])
@@ -575,6 +725,9 @@ class BotController:
 
     def shutdown(self) -> None:
         self.stop_flush()
+        if self._recorder.state != "IDLE":
+            self.stop_recording()
+        self._overlay.stop()
         self._cleanup()
         if self._process:
             try:

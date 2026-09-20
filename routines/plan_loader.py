@@ -246,6 +246,7 @@ def _target_kwargs(raw: dict[str, Any]) -> dict[str, Any]:
         "grayscale",
         "label",
         "scrollValue",
+        "scroll_point",
     ):
         if key in raw and raw[key] is not None:
             kwargs[key] = raw[key]

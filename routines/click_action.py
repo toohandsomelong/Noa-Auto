@@ -6,3 +6,4 @@ class ClickAction(Enum):
     LEFT_CLICK = "left_click"
     CONTINUE = "continue"
     RIGHT_CLICK = "right_click"
+    SCROLL = "scroll"

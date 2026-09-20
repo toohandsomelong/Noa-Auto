@@ -8,7 +8,8 @@ pyautogui>=0.9.54
 fastapi>=0.109
 starlette>=0.36
 uvicorn[standard]>=0.27
+pynput>=1.7
 
 # Install:
 #   conda install -n base pywin32 psutil pillow
-#   pip install mss opencv-python numpy pyautogui fastapi uvicorn
+#   pip install mss opencv-python numpy pyautogui fastapi uvicorn pynput

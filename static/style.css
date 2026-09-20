@@ -88,6 +88,7 @@ body {
 .control-row {
     display: flex;
     align-items: center;
+    flex-wrap: wrap;
     gap: 8px;
 }
 
@@ -195,6 +196,29 @@ button:disabled {
 
 .btn-stop:hover:not(:disabled) {
     background: #9e2323;
+}
+
+.btn-record {
+    background: #7a1a1a;
+    border-color: #b33;
+}
+
+.btn-record:hover:not(:disabled) {
+    background: #9e2323;
+}
+
+.btn-record.recording {
+    background: #272;
+    border-color: #4a4;
+}
+
+.btn-step {
+    background: #3c3c3c;
+    border-color: #555;
+}
+
+.btn-step:hover:not(:disabled) {
+    background: #505050;
 }
 
 #status-label {
@@ -795,6 +819,21 @@ button:disabled {
 
 .editor-error.hidden {
     display: none;
+}
+
+.loop-hint {
+    width: 100%;
+    font-size: 11px;
+    color: #dca040;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 4px;
+}
+
+.loop-hint button {
+    font-size: 11px;
+    padding: 1px 6px;
 }
 
 

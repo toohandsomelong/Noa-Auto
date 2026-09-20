@@ -110,7 +110,7 @@ def fake_screen(monkeypatch) -> FakeScreen:
     monkeypatch.setattr(step_mod, "time", fs.clock)
     monkeypatch.setattr(routine_mod, "time", fs.clock)
     monkeypatch.setattr(sb, "_capture", fs.capture)
-    monkeypatch.setattr(sb, "mss", types.SimpleNamespace(mss=lambda: _FakeSct()))
+    monkeypatch.setattr(sb, "mss", types.SimpleNamespace(MSS=lambda: _FakeSct()))
     monkeypatch.setattr(cs, "match_template", fs.match)
     monkeypatch.setattr(routine_mod, "match_template", fs.match)
     monkeypatch.setattr(cs, "do_click", fs.click)
@@ -312,8 +312,11 @@ def fake_win32(monkeypatch) -> FakeWin32:
     win32process = types.SimpleNamespace(
         GetWindowThreadProcessId=fake.get_thread_process_id
     )
+    import core.screen_bot as sb
+
     monkeypatch.setattr(gl, "win32gui", fake)
     monkeypatch.setattr(gl, "win32process", win32process)
     monkeypatch.setattr(fw, "win32gui", fake)
     monkeypatch.setattr(fw, "win32process", win32process)
+    monkeypatch.setattr(sb, "win32gui", fake)
     return fake
