@@ -39,8 +39,11 @@ const windowOptions = document.getElementById("window-options");
 const templateZoom = document.getElementById("template-zoom");
 const templateZoomImg = templateZoom.querySelector("img");
 const recordBtn = document.getElementById("record-btn");
-const addStepDashboardBtn = document.getElementById("add-step-btn-dashboard");
-const nextStepDashboardBtn = document.getElementById("next-step-btn-dashboard");
+const treeSource = document.getElementById("tree-source");
+const treeView = document.getElementById("tree-view");
+const planTreeModal = document.getElementById("plan-tree-modal");
+const editorTreeView = document.getElementById("editor-tree-view");
+const planTreeClose = document.getElementById("plan-tree-close");
 const CONFIG_FIELDS = [
     { id: "cfg-game-path", key: "game_path", type: "string" },
     { id: "cfg-tab-name", key: "tab_name", type: "string" },
@@ -64,6 +67,7 @@ let previewFramePending = false;
 let snapshotRows = new Map();
 let isRecording = false;
 let recordedStepCount = 0;
+let lastRecordPayload = null;
 
 function connect() {
     const proto = location.protocol === "https:" ? "wss" : "ws";
@@ -149,7 +153,6 @@ function updateState(state) {
     startBtn.disabled = isActive || isRecording;
     stopBtn.disabled = !isActive;
     recordBtn.disabled = isActive;
-    addStepDashboardBtn.disabled = !isRecording;
     setControlsEnabled(!isActive);
 }
 
@@ -169,11 +172,16 @@ function updateRecordingState(data) {
     const targetCount = data.target_count || 0;
     recordBtn.textContent = isRecording ? `Stop (step ${stepIndex} · ${targetCount}t)` : "Record";
     recordBtn.classList.toggle("recording", isRecording);
-    addStepDashboardBtn.classList.toggle("hidden", !isRecording);
-    nextStepDashboardBtn.classList.toggle("hidden", !isRecording);
     startBtn.disabled = isRecording || isActive;
-    addStepDashboardBtn.disabled = !isRecording;
-    nextStepDashboardBtn.disabled = !isRecording;
+
+    lastRecordPayload = data;
+    populateTreeSourceOptions();
+    if (isRecording && (!treeSource.value || treeSource.value === "__recording__")) {
+        treeSource.value = "__recording__";
+    }
+    if (treeSource.value === "__recording__") {
+        renderRecordingTree();
+    }
 }
 
 async function toggleRecording() {
@@ -183,6 +191,8 @@ async function toggleRecording() {
         if (data.ok && data.name) {
             appendLog(`Recorded plan '${data.name}' (${data.steps} steps)`);
             await loadRoutines();
+            treeSource.value = data.name;
+            updateTreeView();
             openRoutineEditor(data.name);
         } else if (data.error) {
             appendLog(`Record stop: ${data.error}`);
@@ -224,6 +234,222 @@ async function loadRecordingState() {
     } catch (e) {
         // ignore
     }
+}
+
+function populateTreeSourceOptions() {
+    const current = treeSource.value;
+    treeSource.innerHTML = "";
+
+    const emptyOpt = document.createElement("option");
+    emptyOpt.value = "";
+    emptyOpt.textContent = "(select source)";
+    treeSource.appendChild(emptyOpt);
+
+    if (isRecording) {
+        const recOpt = document.createElement("option");
+        recOpt.value = "__recording__";
+        recOpt.textContent = "(live recording)";
+        treeSource.appendChild(recOpt);
+    }
+
+    for (const name of availableRoutines.slice().sort()) {
+        const opt = document.createElement("option");
+        opt.value = name;
+        opt.textContent = routineLabels[name] || name;
+        treeSource.appendChild(opt);
+    }
+
+    const valid = Array.from(treeSource.options).some((o) => o.value === current);
+    if (valid) {
+        treeSource.value = current;
+    } else if (isRecording) {
+        treeSource.value = "__recording__";
+    } else if (availableRoutines.length > 0) {
+        treeSource.value = availableRoutines[0];
+    } else {
+        treeSource.value = "";
+    }
+}
+
+async function updateTreeView() {
+    if (!treeSource.value) {
+        treeView.innerHTML = "";
+        return;
+    }
+    if (treeSource.value === "__recording__") {
+        renderRecordingTree();
+        return;
+    }
+    try {
+        const res = await fetch(`/api/plan/${encodeURIComponent(treeSource.value)}`);
+        if (!res.ok) {
+            treeView.innerHTML = `<div class="tree-error">Failed to load plan</div>`;
+            return;
+        }
+        const plan = await res.json();
+        renderPlanTree(plan, treeView);
+    } catch (e) {
+        treeView.innerHTML = `<div class="tree-error">${escapeHtml(e.message)}</div>`;
+    }
+}
+
+function renderRecordingTree() {
+    if (!lastRecordPayload) {
+        treeView.innerHTML = "";
+        return;
+    }
+    const plan = {
+        name: lastRecordPayload.name || "(recording)",
+        steps: (lastRecordPayload.steps || []).slice(),
+        interrupt_steps: [],
+    };
+    const current = lastRecordPayload.current_targets || [];
+    if (current.length > 0) {
+        plan.steps.push({
+            type: "click",
+            label: `step ${lastRecordPayload.step_index || 1} (current)`,
+            targets: current,
+        });
+    }
+    renderPlanTree(plan, treeView);
+}
+
+function renderEditorTree() {
+    if (!planTreeModal || planTreeModal.classList.contains("hidden")) {
+        return;
+    }
+    const plan = {
+        name: routineNameInput.value.trim() || routineEditorState.name || "",
+        steps: routineEditorState.steps,
+        interrupt_steps: routineEditorState.interrupt_steps,
+    };
+    renderPlanTree(plan, editorTreeView, { onStepClick: focusEditorStep });
+}
+
+function renderPlanTree(plan, container, options = {}) {
+    container.innerHTML = "";
+    if (!plan) {
+        return;
+    }
+
+    const root = document.createElement("div");
+    root.className = "tree-view";
+
+    const rootNode = document.createElement("div");
+    rootNode.className = "tree-node tree-root";
+    rootNode.textContent = plan.name || "Untitled plan";
+    root.appendChild(rootNode);
+
+    const children = document.createElement("div");
+    children.className = "tree-children";
+
+    if (Array.isArray(plan.steps) && plan.steps.length > 0) {
+        children.appendChild(renderTreeGroup("Steps", plan.steps, "steps", options));
+    }
+    if (Array.isArray(plan.interrupt_steps) && plan.interrupt_steps.length > 0) {
+        children.appendChild(renderTreeGroup("Interrupt Steps", plan.interrupt_steps, "interrupt_steps", options));
+    }
+
+    root.appendChild(children);
+    container.appendChild(root);
+}
+
+function renderTreeGroup(title, steps, listKey, options) {
+    const node = makeTreeNode(title, true);
+    node.querySelector(".tree-label").classList.add("tree-group");
+    const container = node.querySelector(".tree-children");
+    steps.forEach((step, idx) => {
+        container.appendChild(renderStepNode(step, idx, listKey, options));
+    });
+    return node;
+}
+
+function renderStepNode(step, idx, listKey, options) {
+    const label = `Step ${idx + 1}${step.label ? " · " + step.label : ""}`;
+    const onLabelClick = options.onStepClick
+        ? () => options.onStepClick(listKey, idx)
+        : null;
+    const node = makeTreeNode(label, true, onLabelClick);
+    const container = node.querySelector(".tree-children");
+    (step.targets || []).forEach((target, tidx) => {
+        container.appendChild(renderTargetNode(target, tidx));
+    });
+    return node;
+}
+
+function renderTargetNode(target, idx) {
+    const action = target.action || "left_click";
+    const label = `Target ${idx + 1} · ${action}`;
+    const node = makeTreeNode(label, true);
+    const container = node.querySelector(".tree-children");
+    container.classList.add("tree-templates");
+    targetTemplates(target).forEach((path) => {
+        if (!path) {
+            return;
+        }
+        const img = document.createElement("img");
+        img.className = "target-preview";
+        img.alt = path;
+        img.title = path;
+        img.addEventListener("error", () => img.classList.add("hidden"));
+        img.addEventListener("mouseenter", (e) => {
+            if (img.classList.contains("hidden")) {
+                return;
+            }
+            e.stopPropagation();
+            showTemplateZoom(img);
+        });
+        img.addEventListener("mouseleave", hideTemplateZoom);
+        setTargetPreview(img, path);
+        container.appendChild(img);
+    });
+    return node;
+}
+
+function makeTreeNode(label, expanded, onLabelClick) {
+    const node = document.createElement("div");
+    node.className = "tree-node";
+
+    const row = document.createElement("div");
+    row.className = "tree-row";
+
+    const caret = document.createElement("span");
+    caret.className = "tree-caret" + (expanded ? "" : " collapsed");
+
+    const labelEl = document.createElement("span");
+    labelEl.className = "tree-label" + (onLabelClick ? " tree-focus" : "");
+    labelEl.textContent = label;
+    if (onLabelClick) {
+        labelEl.addEventListener("click", onLabelClick);
+    }
+
+    const children = document.createElement("div");
+    children.className = "tree-children";
+    if (!expanded) {
+        children.style.display = "none";
+    }
+
+    caret.addEventListener("click", () => {
+        caret.classList.toggle("collapsed");
+        children.style.display = caret.classList.contains("collapsed") ? "none" : "";
+    });
+
+    row.appendChild(caret);
+    row.appendChild(labelEl);
+    node.appendChild(row);
+    node.appendChild(children);
+    return node;
+}
+
+function focusEditorStep(listKey, idx) {
+    const container = listKey === "interrupt_steps" ? routineInterruptSteps : routineSteps;
+    const card = container.querySelector(`[data-step-idx="${idx}"]`);
+    if (!card) {
+        return;
+    }
+    card.scrollIntoView({ behavior: "smooth", block: "center" });
+    card.classList.add("step-highlight");
+    window.setTimeout(() => card.classList.remove("step-highlight"), 1200);
 }
 
 function updateActiveTarget(target) {
@@ -313,6 +539,8 @@ async function loadRoutines() {
         repeatInput.value = String(data.repeat);
     }
     renderChain();
+    populateTreeSourceOptions();
+    updateTreeView();
 }
 
 function renderAvailable() {
@@ -601,10 +829,13 @@ async function openRoutineEditor(name) {
     renderRoutineInterruptSteps();
     hideRoutineError();
     routineEditorModal.classList.remove("hidden");
+    planTreeModal.classList.remove("hidden");
+    renderEditorTree();
 }
 
 function closeRoutineEditor() {
     routineEditorModal.classList.add("hidden");
+    planTreeModal.classList.add("hidden");
     routineEditorState = newRoutineState();
     editingFilename = null;
 }
@@ -657,6 +888,8 @@ function renderRoutineInterruptSteps() {
 function renderStepCard(step, idx, listKey) {
     const card = document.createElement("div");
     card.className = "step-card";
+    card.dataset.listKey = listKey;
+    card.dataset.stepIdx = String(idx);
 
     const header = document.createElement("div");
     header.className = "step-header";
@@ -1062,6 +1295,7 @@ function refreshEditor() {
     routineEditorState.name = routineNameInput.value.trim();
     renderRoutineSteps();
     renderRoutineInterruptSteps();
+    renderEditorTree();
 }
 
 function showRoutineError(msg) {
@@ -1131,6 +1365,8 @@ async function deleteRoutine(name) {
 createRoutineBtn.addEventListener("click", () => openRoutineEditor(null));
 routineEditorClose.addEventListener("click", closeRoutineEditor);
 routineSaveBtn.addEventListener("click", saveRoutine);
+routineNameInput.addEventListener("input", renderEditorTree);
+planTreeClose.addEventListener("click", () => planTreeModal.classList.add("hidden"));
 addStepBtn.addEventListener("click", () => {
     routineEditorState.steps.push(newClickStep());
     refreshEditor();
@@ -1144,8 +1380,7 @@ routineEditorModal.addEventListener("click", (e) => {
 });
 
 recordBtn.addEventListener("click", toggleRecording);
-addStepDashboardBtn.addEventListener("click", requestCrop);
-nextStepDashboardBtn.addEventListener("click", requestNextStep);
+treeSource.addEventListener("change", updateTreeView);
 
 connect();
 loadConfig();

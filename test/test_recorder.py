@@ -76,6 +76,7 @@ def test_accept_target_writes_crop_and_returns_target(recorder, fake_recorder_de
     assert target["action"] == "left_click"
     assert target["template"].startswith("templates/recorded/my flow/")
     assert os.path.exists(os.path.join(fake_recorder_deps, "recorded", "my flow"))
+    assert recorder.status()["name"] == "my flow"
 
 
 def test_dedupe_identical_crops_reuses_file(recorder, fake_recorder_deps):
@@ -136,6 +137,9 @@ def test_accept_targets_accumulate_into_current_step(recorder):
     status = recorder.status()
     assert status["target_count"] == 2
     assert status["step_count"] == 0
+    assert len(status["current_targets"]) == 2
+    assert status["current_targets"][0]["action"] == "left_click"
+    assert status["current_targets"][1]["action"] == "right_click"
 
 
 def test_next_step_builds_step_with_targets(recorder):
@@ -151,6 +155,9 @@ def test_next_step_builds_step_with_targets(recorder):
     assert status["step_count"] == 1
     assert status["target_count"] == 0
     assert status["step_index"] == 2
+    assert len(status["steps"]) == 1
+    assert status["steps"][0]["label"] == "step 1"
+    assert len(status["steps"][0]["targets"]) == 2
 
 
 def test_next_step_without_targets_returns_none(recorder):

@@ -52,9 +52,12 @@ class Recorder:
         with self._lock:
             return {
                 "state": self._state,
+                "name": self._name,
                 "step_count": len(self._steps),
                 "target_count": len(self._current_targets),
                 "step_index": self._step_index,
+                "steps": list(self._steps),
+                "current_targets": list(self._current_targets),
             }
 
     def start(self, name: str | None = None) -> bool:
