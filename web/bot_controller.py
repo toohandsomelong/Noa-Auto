@@ -44,6 +44,7 @@ class BotController:
         self._frame_listeners: list[Callable[[dict], None]] = []
         self._config_listeners: list[Callable[[dict], None]] = []
         self._record_listeners: list[Callable[[dict], None]] = []
+        self._step_listeners: list[Callable[[dict], None]] = []
 
         self._flush_stop = threading.Event()
         self._flush_thread: threading.Thread | None = None
@@ -88,6 +89,9 @@ class BotController:
     def on_record_event(self, listener: Callable[[dict], None]) -> None:
         self._record_listeners.append(listener)
 
+    def on_step_event(self, listener: Callable[[dict], None]) -> None:
+        self._step_listeners.append(listener)
+
     def start_flush(self) -> None:
         if self._flush_thread is not None:
             return
@@ -127,6 +131,14 @@ class BotController:
         else:
             data = {"type": "frame", **payload}
         for listener in self._frame_listeners:
+            try:
+                listener(data)
+            except Exception:
+                pass
+
+    def _on_step(self, payload: dict) -> None:
+        data = {"type": "step", **payload}
+        for listener in self._step_listeners:
             try:
                 listener(data)
             except Exception:
@@ -408,6 +420,7 @@ class BotController:
             self.screen_bot.on_routine_done = self._on_routine_done
             self.screen_bot.on_routine_abort = self._on_routine_abort
             self.screen_bot.on_frame = self._on_frame
+            self.screen_bot.on_step = self._on_step
             self.screen_bot.start()
             self._kickoff_chain()
         self._monitor_process()
@@ -471,6 +484,7 @@ class BotController:
             self.screen_bot.on_routine_done = self._on_routine_done
             self.screen_bot.on_routine_abort = self._on_routine_abort
             self.screen_bot.on_frame = self._on_frame
+            self.screen_bot.on_step = self._on_step
             self.screen_bot.start()
             self._kickoff_chain()
         self._monitor_process()

@@ -44,6 +44,7 @@ const treeView = document.getElementById("tree-view");
 const planTreeModal = document.getElementById("plan-tree-modal");
 const editorTreeView = document.getElementById("editor-tree-view");
 const planTreeClose = document.getElementById("plan-tree-close");
+const treeSection = document.getElementById("tree-section");
 const CONFIG_FIELDS = [
     { id: "cfg-game-path", key: "game_path", type: "string" },
     { id: "cfg-tab-name", key: "tab_name", type: "string" },
@@ -68,6 +69,7 @@ let snapshotRows = new Map();
 let isRecording = false;
 let recordedStepCount = 0;
 let lastRecordPayload = null;
+let currentRunStep = { routine: null, stepIndex: null };
 
 function connect() {
     const proto = location.protocol === "https:" ? "wss" : "ws";
@@ -93,6 +95,8 @@ function connect() {
             updateActiveTarget(data.active_target);
         } else if (data.type === "record") {
             updateRecordingState(data);
+        } else if (data.type === "step") {
+            updateRunStep(data);
         }
     };
     ws.onclose = () => {
@@ -149,11 +153,20 @@ function updateState(state) {
     statusLabel.textContent = state;
     statusLabel.className = "status-" + state.toLowerCase();
 
+    const wasActive = isActive;
     isActive = state === "RUNNING" || state === "PAUSED";
     startBtn.disabled = isActive || isRecording;
     stopBtn.disabled = !isActive;
     recordBtn.disabled = isActive;
     setControlsEnabled(!isActive);
+
+    if (treeSection) {
+        treeSection.hidden = !isActive;
+    }
+    if (!isActive && wasActive) {
+        currentRunStep = { routine: null, stepIndex: null };
+        highlightCurrentStep();
+    }
 }
 
 function setControlsEnabled(enabled) {
@@ -274,22 +287,60 @@ function populateTreeSourceOptions() {
 async function updateTreeView() {
     if (!treeSource.value) {
         treeView.innerHTML = "";
-        return;
-    }
-    if (treeSource.value === "__recording__") {
+    } else if (treeSource.value === "__recording__") {
         renderRecordingTree();
+    } else {
+        try {
+            const res = await fetch(`/api/plan/${encodeURIComponent(treeSource.value)}`);
+            if (!res.ok) {
+                treeView.innerHTML = `<div class="tree-error">Failed to load plan</div>`;
+            } else {
+                const plan = await res.json();
+                renderPlanTree(plan, treeView);
+            }
+        } catch (e) {
+            treeView.innerHTML = `<div class="tree-error">${escapeHtml(e.message)}</div>`;
+        }
+    }
+    highlightCurrentStep();
+}
+
+function updateRunStep(data) {
+    const routine = data.routine || null;
+    const stepIndex = data.step_index !== undefined ? data.step_index : null;
+    const changed = currentRunStep.routine !== routine;
+
+    currentRunStep = { routine, stepIndex };
+
+    if (!isActive || !routine || !availableRoutines.includes(routine)) {
+        highlightCurrentStep();
         return;
     }
-    try {
-        const res = await fetch(`/api/plan/${encodeURIComponent(treeSource.value)}`);
-        if (!res.ok) {
-            treeView.innerHTML = `<div class="tree-error">Failed to load plan</div>`;
-            return;
-        }
-        const plan = await res.json();
-        renderPlanTree(plan, treeView);
-    } catch (e) {
-        treeView.innerHTML = `<div class="tree-error">${escapeHtml(e.message)}</div>`;
+
+    if (changed && !isRecording) {
+        treeSource.value = routine;
+        updateTreeView();
+        return;
+    }
+
+    if (treeSource.value === routine) {
+        highlightCurrentStep();
+    }
+}
+
+function highlightCurrentStep() {
+    treeView.querySelectorAll(".tree-current").forEach((el) => el.classList.remove("tree-current"));
+    if (!currentRunStep.routine || currentRunStep.stepIndex === null || currentRunStep.stepIndex === undefined) {
+        return;
+    }
+    if (treeSource.value !== currentRunStep.routine) {
+        return;
+    }
+    const node = treeView.querySelector(
+        `.tree-node[data-list-key="steps"][data-step-idx="${currentRunStep.stepIndex}"]`
+    );
+    if (node) {
+        node.classList.add("tree-current");
     }
 }
 
@@ -370,6 +421,8 @@ function renderStepNode(step, idx, listKey, options) {
         ? () => options.onStepClick(listKey, idx)
         : null;
     const node = makeTreeNode(label, true, onLabelClick);
+    node.dataset.listKey = listKey;
+    node.dataset.stepIdx = String(idx);
     const container = node.querySelector(".tree-children");
     (step.targets || []).forEach((target, tidx) => {
         container.appendChild(renderTargetNode(target, tidx));

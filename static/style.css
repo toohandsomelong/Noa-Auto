@@ -913,6 +913,16 @@ button:disabled {
     text-decoration: underline;
 }
 
+.tree-current > .tree-row {
+    background: #094771;
+    border-radius: 3px;
+}
+
+.tree-current > .tree-row .tree-label {
+    color: #ffffff;
+    font-weight: bold;
+}
+
 .tree-group {
     font-weight: bold;
     color: #ce9178;

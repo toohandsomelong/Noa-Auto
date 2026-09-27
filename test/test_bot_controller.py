@@ -86,6 +86,16 @@ def test_preview_api(controller, fake_screen_bot):
     assert controller.set_preview_mode("bogus") is False
 
 
+def test_step_event_is_broadcast(controller):
+    received = []
+    controller.on_step_event(received.append)
+    controller._on_step({"routine": "x", "step_index": 3, "step_label": "s"})
+    assert len(received) == 1
+    assert received[0]["type"] == "step"
+    assert received[0]["routine"] == "x"
+    assert received[0]["step_index"] == 3
+
+
 def test_preview_unavailable_without_screen_bot(
     fake_logger, fake_game_launcher, fake_focus_watcher
 ):

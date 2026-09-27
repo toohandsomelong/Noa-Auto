@@ -67,6 +67,10 @@ def broadcast_record(data: dict) -> None:
     _schedule_broadcast(data)
 
 
+def broadcast_step(data: dict) -> None:
+    _schedule_broadcast(data)
+
+
 def _schedule_broadcast(data: dict) -> None:
     if _loop is None:
         return
@@ -100,6 +104,7 @@ def create_app(controller: BotController) -> FastAPI:
     controller.on_frame_event(broadcast_frame)
     controller.on_config_event(broadcast_config)
     controller.on_record_event(broadcast_record)
+    controller.on_step_event(broadcast_step)
 
     @app.get("/")
     async def index() -> FileResponse:

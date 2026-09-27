@@ -135,13 +135,16 @@ class ScreenBot:
         self.on_routine_done: Callable[[str], None] | None = None
         self.on_routine_abort: Callable[[str], None] | None = None
         self.on_frame: Callable[[dict], None] | None = None
+        self.on_step: Callable[[dict], None] | None = None
         self._last_frame_ts: float = 0.0
         self._last_match_key: tuple | None = None
+        self._last_step_signal: tuple | None = None
         self._capture_unavailable_logged: bool = False
 
     def start_routine(self, routine: Any) -> None:
         self._routine = routine
         self._last_match_key = None
+        self._last_step_signal = None
         if self.preview and self.on_frame is not None:
             try:
                 self.on_frame({"action": "clear"})
@@ -273,6 +276,32 @@ class ScreenBot:
             return
         self._broadcast_frame(screenshot, step)
 
+    def _maybe_signal_step(self) -> None:
+        if self.on_step is None:
+            return
+        routine = self._routine
+        if routine is None or getattr(routine, "done", False):
+            return
+        step = getattr(routine, "current_step", lambda: None)()
+        if step is None:
+            return
+        name = getattr(routine, "name", None)
+        index = getattr(step, "index", None)
+        label = getattr(step, "label", None)
+        key = (name, index, label)
+        if key == self._last_step_signal:
+            return
+        self._last_step_signal = key
+        try:
+            self.on_step({
+                "action": "step",
+                "routine": name,
+                "step_index": index,
+                "step_label": label,
+            })
+        except Exception:
+            pass
+
     def _resolve_region(
         self, sct: Any
     ) -> tuple[dict[str, int], tuple[int, int]] | None:
@@ -319,11 +348,13 @@ class ScreenBot:
         except Exception as e:
             self.logger.error(f"Routine tick failed: {e}")
         self._maybe_broadcast_frame(screenshot)
+        self._maybe_signal_step()
 
         if self._routine is not None and not self._routine.done:
             return
         done_routine = self._routine
         self._routine = None
+        self._last_step_signal = None
         if done_routine is not None:
             self._notify_routine_finished(done_routine)
 

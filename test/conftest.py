@@ -201,6 +201,7 @@ class FakeScreenBot:
         self.on_routine_done = None
         self.on_routine_abort = None
         self.on_frame = None
+        self.on_step = None
 
     def start(self) -> None:
         pass

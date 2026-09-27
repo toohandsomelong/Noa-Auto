@@ -19,9 +19,10 @@ class StubStep:
 
 
 class StubRoutine:
-    def __init__(self, step=None) -> None:
+    def __init__(self, step=None, name="R") -> None:
         self.done = False
         self._step = step
+        self.name = name
 
     def current_step(self):
         return self._step
@@ -186,6 +187,52 @@ def test_check_interval_is_mutable_at_runtime():
     assert bot.check_interval == 0.5
     bot.check_interval = 1.25
     assert bot.check_interval == 1.25
+
+
+def test_step_signal_emitted_once_per_step_change(fake_logger):
+    bot = _bot(fake_logger, preview=False)
+    steps = []
+    bot.on_step = steps.append
+
+    step = StubStep(label="S0")
+    routine = StubRoutine(step, name="R")
+    bot.start_routine(routine)
+    bot._maybe_signal_step()
+    assert len(steps) == 1
+    assert steps[0]["action"] == "step"
+    assert steps[0]["routine"] == "R"
+    assert steps[0]["step_index"] == 0
+    assert steps[0]["step_label"] == "S0"
+
+    bot._maybe_signal_step()
+    assert len(steps) == 1  # deduped
+
+    step.label = "S1"
+    bot._maybe_signal_step()
+    assert len(steps) == 2
+
+
+def test_step_signal_works_without_preview(fake_logger):
+    bot = _bot(fake_logger, preview=False)
+    steps = []
+    bot.on_step = steps.append
+    bot.start_routine(StubRoutine(StubStep(), name="R"))
+    bot._maybe_signal_step()
+    assert len(steps) == 1
+
+
+def test_step_signal_resets_on_start_routine(fake_logger):
+    bot = _bot(fake_logger)
+    steps = []
+    bot.on_step = steps.append
+
+    bot.start_routine(StubRoutine(StubStep(), name="A"))
+    bot._maybe_signal_step()
+    assert steps[-1]["routine"] == "A"
+
+    bot.start_routine(StubRoutine(StubStep(), name="B"))
+    bot._maybe_signal_step()
+    assert steps[-1]["routine"] == "B"
 
 
 def test_resolve_capture_region_uses_focus_watcher_hwnd(fake_win32):
