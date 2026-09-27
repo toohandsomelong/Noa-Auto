@@ -57,7 +57,7 @@ def test_target_point_center_and_offsets():
     match = MatchResult((10, 10), (20, 10), 0.9)
     assert ClickStep._target_point(match, Target("a.png")) == (20, 15)
     assert ClickStep._target_point(match, Target("a.png", offset_x=5)) == (25, 15)
-    assert ClickStep._target_point(match, Target("a.png", offset_y=3)) == (20, 23)
+    assert ClickStep._target_point(match, Target("a.png", offset_y=3)) == (20, 18)
 
 
 def test_callbacks_fire_on_click_and_confirm(fake_screen):
@@ -92,3 +92,32 @@ def test_and_target_requires_all_templates(fake_screen):
     fake_screen.visible = {"A1.png", "A2.png"}
     step.tick("screen")
     assert len(fake_screen.clicks) == 1
+
+
+def test_scroll_until_match_scrolls_while_not_found(fake_screen):
+    from core.screen_bot import set_capture_origin
+
+    set_capture_origin(5, 5)
+    target = Target("templates/x/A.png", scroll_point=(10, 20), scrollValue=-5)
+    step = _step([target])
+    fake_screen.visible = set()
+    assert step.tick("screen") == WAIT
+    assert len(fake_screen.clicks) == 1
+    assert fake_screen.clicks[0] == ("A.png", 15, 25)
+    fake_screen.clicks.clear()
+    assert step.tick("screen") == WAIT
+    assert len(fake_screen.clicks) == 1
+
+
+def test_scroll_until_match_then_clicks_without_post_scroll(fake_screen):
+    from core.screen_bot import set_capture_origin
+
+    set_capture_origin(0, 0)
+    target = Target("templates/x/A.png", scroll_point=(10, 20), scrollValue=-5)
+    step = _step([target])
+    fake_screen.visible = {"A.png"}
+    assert step.tick("screen") == WAIT
+    assert len(fake_screen.clicks) == 1
+    _, x, y = fake_screen.clicks[0]
+    assert (x, y) == (15, 15)
+

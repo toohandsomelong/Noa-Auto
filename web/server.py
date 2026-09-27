@@ -63,6 +63,14 @@ def broadcast_config(data: dict) -> None:
     _schedule_broadcast(data)
 
 
+def broadcast_record(data: dict) -> None:
+    _schedule_broadcast(data)
+
+
+def broadcast_step(data: dict) -> None:
+    _schedule_broadcast(data)
+
+
 def _schedule_broadcast(data: dict) -> None:
     if _loop is None:
         return
@@ -95,6 +103,8 @@ def create_app(controller: BotController) -> FastAPI:
     controller.on_state_event(broadcast_state)
     controller.on_frame_event(broadcast_frame)
     controller.on_config_event(broadcast_config)
+    controller.on_record_event(broadcast_record)
+    controller.on_step_event(broadcast_step)
 
     @app.get("/")
     async def index() -> FileResponse:
@@ -152,6 +162,27 @@ def create_app(controller: BotController) -> FastAPI:
     async def browse_path(path: str = "") -> JSONResponse:
         result = controller.browse(path)
         return JSONResponse(content=result)
+
+    @app.post("/api/record/start")
+    async def start_recording(body: dict) -> JSONResponse:
+        name = body.get("name") if isinstance(body.get("name"), str) else None
+        return JSONResponse(content=controller.start_recording(name=name))
+
+    @app.post("/api/record/crop")
+    async def record_crop() -> JSONResponse:
+        return JSONResponse(content=controller.request_crop())
+
+    @app.post("/api/record/next-step")
+    async def record_next_step() -> JSONResponse:
+        return JSONResponse(content=controller.next_step())
+
+    @app.post("/api/record/stop")
+    async def stop_recording() -> JSONResponse:
+        return JSONResponse(content=controller.stop_recording())
+
+    @app.get("/api/record/status")
+    async def recording_status() -> JSONResponse:
+        return JSONResponse(content=controller.get_recording_status())
 
     @app.get("/api/image")
     async def serve_image(path: str = "") -> Response:

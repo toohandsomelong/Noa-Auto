@@ -119,3 +119,9 @@ def test_browse_endpoint(client):
     response = client.get("/api/browse", params={"path": ""})
     assert response.status_code == 200
     assert set(response.json()) == {"dirs", "exes", "images", "parent"}
+
+
+def test_record_status_initial(client):
+    response = client.get("/api/record/status")
+    assert response.status_code == 200
+    assert response.json()["state"] == "IDLE"

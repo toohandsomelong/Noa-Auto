@@ -44,7 +44,11 @@ def do_click(
             case ClickAction.LEFT_CLICK:
                 pyautogui.click(point[0], point[1])
             case ClickAction.RIGHT_CLICK:
-                pyautogui.rightClick(point[0], point[1])                
+                pyautogui.rightClick(point[0], point[1])
+            case ClickAction.SCROLL:
+                if scrollValue == 0:
+                    printLogError("SCROLL action requires scrollValue", logger)
+                    return False
             case _:
                 printLogError(f"Unknown ClickAction: {ClickAction}", logger)
                 return False

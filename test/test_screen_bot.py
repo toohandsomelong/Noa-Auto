@@ -6,7 +6,7 @@ import cv2
 import numpy as np
 
 from core.match_result import MatchResult
-from core.screen_bot import ScreenBot, _load_template, _match
+from core.screen_bot import ScreenBot, _load_template, _match, resolve_capture_region
 from core.state_manager import StateManager
 
 
@@ -19,9 +19,10 @@ class StubStep:
 
 
 class StubRoutine:
-    def __init__(self, step=None) -> None:
+    def __init__(self, step=None, name="R") -> None:
         self.done = False
         self._step = step
+        self.name = name
 
     def current_step(self):
         return self._step
@@ -186,3 +187,79 @@ def test_check_interval_is_mutable_at_runtime():
     assert bot.check_interval == 0.5
     bot.check_interval = 1.25
     assert bot.check_interval == 1.25
+
+
+def test_step_signal_emitted_once_per_step_change(fake_logger):
+    bot = _bot(fake_logger, preview=False)
+    steps = []
+    bot.on_step = steps.append
+
+    step = StubStep(label="S0")
+    routine = StubRoutine(step, name="R")
+    bot.start_routine(routine)
+    bot._maybe_signal_step()
+    assert len(steps) == 1
+    assert steps[0]["action"] == "step"
+    assert steps[0]["routine"] == "R"
+    assert steps[0]["step_index"] == 0
+    assert steps[0]["step_label"] == "S0"
+
+    bot._maybe_signal_step()
+    assert len(steps) == 1  # deduped
+
+    step.label = "S1"
+    bot._maybe_signal_step()
+    assert len(steps) == 2
+
+
+def test_step_signal_works_without_preview(fake_logger):
+    bot = _bot(fake_logger, preview=False)
+    steps = []
+    bot.on_step = steps.append
+    bot.start_routine(StubRoutine(StubStep(), name="R"))
+    bot._maybe_signal_step()
+    assert len(steps) == 1
+
+
+def test_step_signal_resets_on_start_routine(fake_logger):
+    bot = _bot(fake_logger)
+    steps = []
+    bot.on_step = steps.append
+
+    bot.start_routine(StubRoutine(StubStep(), name="A"))
+    bot._maybe_signal_step()
+    assert steps[-1]["routine"] == "A"
+
+    bot.start_routine(StubRoutine(StubStep(), name="B"))
+    bot._maybe_signal_step()
+    assert steps[-1]["routine"] == "B"
+
+
+def test_resolve_capture_region_uses_focus_watcher_hwnd(fake_win32):
+    fake_win32.add(123, "Game")
+    fake_win32.set_rect(123, 10, 20, 800, 600)
+    fw = type("FW", (), {"hwnd": 123})()
+    sct = type("Sct", (), {"monitors": [{"left": 0, "top": 0, "width": 1920, "height": 1080}]})()
+    region, origin = resolve_capture_region(sct, fw)
+    assert region == {"left": 10, "top": 20, "width": 800, "height": 600}
+    assert origin == (10, 20)
+
+
+def test_resolve_capture_region_iconic_returns_none(fake_win32):
+    fake_win32.add(123, "Game")
+    fake_win32.set_rect(123, 0, 0, 800, 600)
+    fake_win32.set_iconic(123, True)
+    fw = type("FW", (), {"hwnd": 123})()
+    sct = type("Sct", (), {"monitors": [{"left": 0, "top": 0, "width": 1920, "height": 1080}]})()
+    assert resolve_capture_region(sct, fw) is None
+
+
+def test_screenbot_resolve_region_delegates(fake_win32):
+    fake_win32.add(123, "Game")
+    fake_win32.set_rect(123, 5, 5, 400, 300)
+    bot = _bot()
+    bot.focus_watcher = type("FW", (), {"hwnd": 123})()
+    sct = type("Sct", (), {"monitors": [{"left": 0, "top": 0, "width": 1920, "height": 1080}]})()
+    region, origin = bot._resolve_region(sct)
+    assert region["width"] == 400
+    assert origin == (5, 5)

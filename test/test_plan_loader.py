@@ -137,6 +137,7 @@ def test_target_kwargs_maps_all_fields():
             "template": ["templates/x/A.png", "templates/x/B.png"],
             "action": "right_click",
             "scrollValue": -100,
+            "scroll_point": [10, 20],
             "goto": 3,
             "offset_x": 1,
             "offset_y": 2,
@@ -149,6 +150,7 @@ def test_target_kwargs_maps_all_fields():
     assert kwargs["template"] == ["templates/x/A.png", "templates/x/B.png"]
     assert kwargs["action"] is ClickAction.RIGHT_CLICK
     assert kwargs["scrollValue"] == -100
+    assert kwargs["scroll_point"] == [10, 20]
     assert kwargs["goto"] == 3
     assert kwargs["offset_x"] == 1
     assert kwargs["offset_y"] == 2

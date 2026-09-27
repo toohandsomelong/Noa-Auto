@@ -39,7 +39,7 @@ def get_capture_origin() -> tuple[int, int]:
 
 def _capture(sct: Any | None = None, region: dict[str, int] | None = None) -> Any | None:
     close_on_exit = sct is None
-    sct = sct or mss.mss()
+    sct = sct or mss.MSS()
     try:
         region = region or sct.monitors[0]
         img = sct.grab(region)  # type: ignore
@@ -76,6 +76,41 @@ def _match(screenshot: Any, template: Any, threshold: float, grayscale: bool) ->
     return MatchResult(location=max_loc, size=(w, h), confidence=max_val) # type: ignore
 
 
+def resolve_capture_region(
+    sct: Any,
+    focus_watcher: Any | None,
+    logger: Any | None = None,
+) -> tuple[dict[str, int], tuple[int, int]] | None:
+    """Return the MSS region dict and its screen-space origin.
+
+    If a target window handle is available, capture its client area so the
+    bot only sees game content and clicks land inside the window even when
+    it is not at (0, 0).  Otherwise fall back to the full virtual screen.
+    """
+    if focus_watcher is None:
+        mon = sct.monitors[0]
+        return mon, (mon["left"], mon["top"])
+
+    hwnd = getattr(focus_watcher, "hwnd", None)
+    if not hwnd:
+        mon = sct.monitors[0]
+        return mon, (mon["left"], mon["top"])
+
+    try:
+        if not win32gui.IsWindow(hwnd) or win32gui.IsIconic(hwnd):
+            return None
+        left, top = win32gui.ClientToScreen(hwnd, (0, 0))
+        _, _, width, height = win32gui.GetClientRect(hwnd)
+        if width <= 0 or height <= 0:
+            return None
+        region = {"left": left, "top": top, "width": width, "height": height}
+        return region, (left, top)
+    except Exception as e:
+        if logger is not None:
+            logger.error(f"Failed to resolve capture region for hwnd {hwnd}: {e}")
+        return None
+
+
 class ScreenBot:
     def __init__(
         self,
@@ -100,13 +135,16 @@ class ScreenBot:
         self.on_routine_done: Callable[[str], None] | None = None
         self.on_routine_abort: Callable[[str], None] | None = None
         self.on_frame: Callable[[dict], None] | None = None
+        self.on_step: Callable[[dict], None] | None = None
         self._last_frame_ts: float = 0.0
         self._last_match_key: tuple | None = None
+        self._last_step_signal: tuple | None = None
         self._capture_unavailable_logged: bool = False
 
     def start_routine(self, routine: Any) -> None:
         self._routine = routine
         self._last_match_key = None
+        self._last_step_signal = None
         if self.preview and self.on_frame is not None:
             try:
                 self.on_frame({"action": "clear"})
@@ -238,6 +276,37 @@ class ScreenBot:
             return
         self._broadcast_frame(screenshot, step)
 
+    def _maybe_signal_step(self) -> None:
+        if self.on_step is None:
+            return
+        routine = self._routine
+        if routine is None or getattr(routine, "done", False):
+            return
+        step = getattr(routine, "current_step", lambda: None)()
+        if step is None:
+            return
+        name = getattr(routine, "name", None)
+        index = getattr(step, "index", None)
+        label = getattr(step, "label", None)
+        key = (name, index, label)
+        if key == self._last_step_signal:
+            return
+        self._last_step_signal = key
+        try:
+            self.on_step({
+                "action": "step",
+                "routine": name,
+                "step_index": index,
+                "step_label": label,
+            })
+        except Exception:
+            pass
+
+    def _resolve_region(
+        self, sct: Any
+    ) -> tuple[dict[str, int], tuple[int, int]] | None:
+        return resolve_capture_region(sct, self.focus_watcher, self.logger)
+
     def _run(self) -> None:
         pyautogui.FAILSAFE = True
         sct = mss.mss()
@@ -254,37 +323,6 @@ class ScreenBot:
                     next_due = time.monotonic() + self.check_interval
         finally:
             sct.close()
-
-    def _resolve_region(
-        self, sct: Any
-    ) -> tuple[dict[str, int], tuple[int, int]] | None:
-        """Return the MSS region dict and its screen-space origin.
-
-        If a target window handle is available, capture its client area so the
-        bot only sees game content and clicks land inside the window even when
-        it is not at (0, 0).  Otherwise fall back to the full virtual screen.
-        """
-        if self.focus_watcher is None:
-            mon = sct.monitors[0]
-            return mon, (mon["left"], mon["top"])
-
-        hwnd = getattr(self.focus_watcher, "hwnd", None)
-        if not hwnd:
-            mon = sct.monitors[0]
-            return mon, (mon["left"], mon["top"])
-
-        try:
-            if not win32gui.IsWindow(hwnd) or win32gui.IsIconic(hwnd):
-                return None
-            left, top = win32gui.ClientToScreen(hwnd, (0, 0))
-            _, _, width, height = win32gui.GetClientRect(hwnd)
-            if width <= 0 or height <= 0:
-                return None
-            region = {"left": left, "top": top, "width": width, "height": height}
-            return region, (left, top)
-        except Exception as e:
-            self.logger.error(f"Failed to resolve capture region for hwnd {hwnd}: {e}")
-            return None
 
     def _run_cycle(self, sct: Any) -> None:
         if self.state_manager.state != BotState.RUNNING:
@@ -310,11 +348,13 @@ class ScreenBot:
         except Exception as e:
             self.logger.error(f"Routine tick failed: {e}")
         self._maybe_broadcast_frame(screenshot)
+        self._maybe_signal_step()
 
         if self._routine is not None and not self._routine.done:
             return
         done_routine = self._routine
         self._routine = None
+        self._last_step_signal = None
         if done_routine is not None:
             self._notify_routine_finished(done_routine)
 

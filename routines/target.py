@@ -12,6 +12,7 @@ class Target:
         *,
         action: ClickAction = ClickAction.LEFT_CLICK,
         scrollValue: int = 0,
+        scroll_point: tuple[int, int] | None = None,
         offset_x: int = 0,
         offset_y: int = 0,
         on_match: Callable[[], None] | None = None,
@@ -25,6 +26,7 @@ class Target:
         self.templates = self._normalize_templates(template)
         self.action = action
         self.scrollValue = scrollValue
+        self.scroll_point = self._normalize_scroll_point(scroll_point)
         self.offset_x = offset_x
         self.offset_y = offset_y
         self.on_match = on_match
@@ -54,6 +56,16 @@ class Target:
                 raise ValueError("target template list must contain only non-empty strings")
             return list(template)
         raise ValueError(f"target template must be a string or list of strings, got {type(template).__name__}")
+
+    @staticmethod
+    def _normalize_scroll_point(scroll_point: tuple[int, int] | list[int] | None) -> tuple[int, int] | None:
+        if scroll_point is None:
+            return None
+        if isinstance(scroll_point, (list, tuple)) and len(scroll_point) == 2:
+            x, y = scroll_point
+            if isinstance(x, int) and isinstance(y, int):
+                return (x, y)
+        raise ValueError("scroll_point must be a tuple/list of two ints or None")
 
     def reset(self) -> None:
         self.click_count = 0

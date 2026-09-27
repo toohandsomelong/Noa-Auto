@@ -59,7 +59,7 @@
         },
         {
           "template": "templates/racemenu/teamtrials/selectopponent.png",
-          "offset_y": 50,
+          "offset_y": 58,
           "label": "selectopponent"
         }
       ]
