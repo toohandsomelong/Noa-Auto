@@ -4,7 +4,7 @@ import time
 from typing import Any, Callable
 
 from core.match_result import MatchResult
-from core.screen_bot import get_capture_origin
+from core.screen_bot import get_capture_origin, get_capture_scale
 
 from routines.base import WAIT, RECOVER, match_template, do_click
 from routines.step import Step
@@ -106,8 +106,12 @@ class ClickStep(Step):
                 and target.scroll_point is not None
             ):
                 ox, oy = get_capture_origin()
+                scale_x, scale_y = get_capture_scale()
                 sx, sy = target.scroll_point
-                point = (sx + ox, sy + oy)
+                point = (
+                    int(sx * scale_x) + ox,
+                    int(sy * scale_y) + oy,
+                )
                 if log:
                     log.info(
                         f"{self.log_prefix()} target \"{target.label}\": not found - "
@@ -196,6 +200,7 @@ class ClickStep(Step):
     @staticmethod
     def _target_point(m: MatchResult, target: Target) -> tuple[int, int]:
         ox, oy = get_capture_origin()
-        x = m.location[0] + m.size[0] // 2 + target.offset_x + ox
-        y = m.location[1] + m.size[1] // 2 + target.offset_y + oy
+        scale_x, scale_y = get_capture_scale()
+        x = int((m.location[0] + m.size[0] // 2 + target.offset_x) * scale_x) + ox
+        y = int((m.location[1] + m.size[1] // 2 + target.offset_y) * scale_y) + oy
         return (x, y)

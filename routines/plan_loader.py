@@ -179,7 +179,16 @@ def build_routine_from_plan(name: str, logger: Any) -> Routine | None:
 
 def _build_config(raw: dict[str, Any]) -> RoutineConfig:
     """Construct a :class:`RoutineConfig` from a JSON config object."""
-    allowed = ("delay", "max_step_retry", "timeout", "resync_timeout", "game_path", "tab_name")
+    allowed = (
+        "delay",
+        "max_step_retry",
+        "timeout",
+        "resync_timeout",
+        "game_path",
+        "tab_name",
+        "capture_width",
+        "capture_height",
+    )
     kwargs = {k: raw[k] for k in allowed if k in raw and raw[k] is not None}
     for key in ("game_path", "tab_name"):
         if key in kwargs and isinstance(kwargs[key], str):

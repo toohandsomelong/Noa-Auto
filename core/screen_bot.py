@@ -21,6 +21,7 @@ from core.state_manager import BotState, StateManager
 logger = logging.getLogger(__name__)
 
 _CAPTURE_ORIGIN: tuple[int, int] = (0, 0)
+_CAPTURE_SCALE: tuple[float, float] = (1.0, 1.0)
 
 
 def set_capture_origin(x: int, y: int) -> None:
@@ -35,6 +36,42 @@ def set_capture_origin(x: int, y: int) -> None:
 
 def get_capture_origin() -> tuple[int, int]:
     return _CAPTURE_ORIGIN
+
+
+def set_capture_scale(sx: float, sy: float) -> None:
+    """Set the scale factor from reference (template) space to screen space.
+
+    When the current capture resolution differs from the resolution at which
+    templates were recorded, the screenshot is resized to the reference size
+    before matching.  Match coordinates therefore live in reference space and
+    must be multiplied by this scale before adding the capture origin.
+    """
+    global _CAPTURE_SCALE
+    _CAPTURE_SCALE = (sx, sy)
+
+
+def get_capture_scale() -> tuple[float, float]:
+    return _CAPTURE_SCALE
+
+
+def _reference_size(routine: Any) -> tuple[int | None, int | None]:
+    config = getattr(routine, "config", None)
+    if config is None:
+        return None, None
+    return (
+        getattr(config, "capture_width", None),
+        getattr(config, "capture_height", None),
+    )
+
+
+def _resize_to_reference(screenshot: Any, ref_w: int, ref_h: int) -> Any:
+    if not isinstance(screenshot, np.ndarray):
+        return screenshot
+    h, w = screenshot.shape[:2]
+    if w == ref_w and h == ref_h:
+        return screenshot
+    interpolation = cv2.INTER_AREA if ref_w < w or ref_h < h else cv2.INTER_LINEAR
+    return cv2.resize(screenshot, (ref_w, ref_h), interpolation=interpolation)
 
 
 def _capture(sct: Any | None = None, region: dict[str, int] | None = None) -> Any | None:
@@ -335,10 +372,19 @@ class ScreenBot:
             return
         self._capture_unavailable_logged = False
         region, origin = resolved
+        ref_w, ref_h = _reference_size(self._routine)
+        if ref_w and ref_h:
+            sx = region["width"] / ref_w
+            sy = region["height"] / ref_h
+        else:
+            sx, sy = 1.0, 1.0
         set_capture_origin(*origin)
+        set_capture_scale(sx, sy)
         screenshot = _capture(sct, region)
         if screenshot is None:
             return
+        if ref_w and ref_h:
+            screenshot = _resize_to_reference(screenshot, ref_w, ref_h)
         if self._routine is None or self._routine.done:
             self._routine = None
             return

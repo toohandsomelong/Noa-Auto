@@ -126,7 +126,6 @@ class Routine:
 
 #TODO
 ##why the fuck step advanced to next step before confirming the click? 
-##priority fixing not match template and screen resolution
 ##implement interactive test ground? this will need more research
 
     def tick(self, screenshot: Any) -> None:

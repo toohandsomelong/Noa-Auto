@@ -53,6 +53,7 @@ class BotController:
             on_toggle=self._on_record_toggle,
             on_crop_request=self._on_record_crop_request,
             on_next_step=self.next_step,
+            focus_watcher=self.focus_watcher,
         )
         self._overlay = RecorderOverlay(
             on_capture=self.begin_crop,
@@ -265,11 +266,16 @@ class BotController:
             self._broadcast_record()
 
     def _build_record_config(self) -> dict[str, Any]:
-        return {
+        config: dict[str, Any] = {
             "game_path": None,
             "tab_name": None,
             "delay": 0.5,
         }
+        region = self._recorder.last_region()
+        if region is not None:
+            config["capture_width"] = region["width"]
+            config["capture_height"] = region["height"]
+        return config
 
     def _unique_plan_name(self, name: str) -> str:
         try:

@@ -222,7 +222,7 @@ def test_get_config_legacy_routine_key(tmp_config, controller):
 
 
 class FakeRecorder:
-    def __init__(self, *, on_toggle=None, on_crop_request=None, on_next_step=None):
+    def __init__(self, *, on_toggle=None, on_crop_request=None, on_next_step=None, focus_watcher=None):
         self.state = "IDLE"
         self.steps = []
         self.current_targets = []
@@ -230,6 +230,8 @@ class FakeRecorder:
         self._toggle_cb = on_toggle
         self._crop_cb = on_crop_request
         self._next_cb = on_next_step
+        self._focus_watcher = focus_watcher
+        self._last_region = None
 
     def start(self, name=None):
         if self.state != "IDLE":
@@ -277,6 +279,9 @@ class FakeRecorder:
             "target_count": len(self.current_targets),
             "step_index": len(self.steps) + 1,
         }
+
+    def last_region(self):
+        return self._last_region
 
 
 class FakeOverlay:

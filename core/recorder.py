@@ -29,6 +29,7 @@ class Recorder:
         on_toggle: Callable[[], None] | None = None,
         on_crop_request: Callable[[], None] | None = None,
         on_next_step: Callable[[], None] | None = None,
+        focus_watcher=None,
     ) -> None:
         self._state = "IDLE"
         self._lock = threading.Lock()
@@ -42,6 +43,8 @@ class Recorder:
         self._on_toggle = on_toggle
         self._on_crop_request = on_crop_request
         self._on_next_step = on_next_step
+        self._focus_watcher = focus_watcher
+        self._last_region: dict[str, int] | None = None
 
     @property
     def state(self) -> str:
@@ -59,6 +62,10 @@ class Recorder:
                 "steps": list(self._steps),
                 "current_targets": list(self._current_targets),
             }
+
+    def last_region(self) -> dict[str, int] | None:
+        with self._lock:
+            return self._last_region
 
     def start(self, name: str | None = None) -> bool:
         with self._lock:
@@ -113,10 +120,11 @@ class Recorder:
             return None
         sct = mss.MSS()
         try:
-            resolved = resolve_capture_region(sct, None)
+            resolved = resolve_capture_region(sct, self._focus_watcher)
             if resolved is None:
                 return None
             region, _origin = resolved
+            self._last_region = region
             frame = _capture(sct, region)
             if frame is None:
                 return None

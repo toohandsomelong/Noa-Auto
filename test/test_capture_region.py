@@ -14,9 +14,10 @@ from routines.target import Target
 
 
 @pytest.fixture(autouse=True)
-def _reset_capture_origin() -> Iterator[None]:
+def _reset_capture_state() -> Iterator[None]:
     yield
     sb.set_capture_origin(0, 0)
+    sb.set_capture_scale(1.0, 1.0)
 
 
 class _FakeSct:
@@ -104,3 +105,52 @@ def test_run_cycle_offsets_click(
 
     assert fake_screen.captured_region == {"left": 300, "top": 400, "width": 800, "height": 600}
     assert fake_screen.clicks == [("x.png", 315, 415)]
+
+
+def test_run_cycle_scales_screenshot_and_click(
+    fake_logger, fake_screen, fake_focus_watcher, fake_win32, monkeypatch
+):
+    import numpy as np
+
+    monkeypatch.setattr(sb, "win32gui", fake_win32)
+
+    fw = fake_focus_watcher
+    fw.hwnd = 42
+    fake_win32.add(42, "game")
+    fake_win32.set_rect(42, 10, 20, 1600, 900)
+
+    state_mgr = StateManager()
+    bot = sb.ScreenBot(fake_logger, state_mgr, fw)
+
+    captured: list[dict[str, int] | None] = []
+
+    def fake_capture(sct=None, region=None):
+        captured.append(region)
+        return np.zeros((region["height"], region["width"], 3), dtype=np.uint8)
+
+    monkeypatch.setattr(sb, "_capture", fake_capture)
+
+    step = ClickStep([Target("templates/x.png")])
+    routine = Routine(
+        "scaled",
+        [step],
+        logger=fake_logger,
+        config=RoutineConfig(capture_width=800, capture_height=450),
+    )
+    bot.start_routine(routine)
+    state_mgr.state = BotState.RUNNING
+
+    fake_screen.visible.add("x.png")
+    bot._run_cycle(_FakeSct([{"left": 0, "top": 0, "width": 1920, "height": 1080}]))
+
+    assert captured[-1] == {"left": 10, "top": 20, "width": 1600, "height": 900}
+    assert sb.get_capture_scale() == (2.0, 2.0)
+    assert fake_screen.clicks == [("x.png", 40, 50)]
+
+
+def test_click_point_scales_with_capture_scale():
+    sb.set_capture_origin(5, 10)
+    sb.set_capture_scale(1.5, 2.0)
+    m = MatchResult(location=(10, 10), size=(20, 10), confidence=0.97)
+    point = ClickStep._target_point(m, Target("templates/x.png", offset_x=5, offset_y=3))
+    assert point == (5 + int((10 + 10 + 5) * 1.5), 10 + int((10 + 5 + 3) * 2.0))
