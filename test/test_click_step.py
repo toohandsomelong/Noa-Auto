@@ -1,10 +1,22 @@
 from __future__ import annotations
 
+import pytest
+
 from core.match_result import MatchResult
+from core.screen_bot import set_capture_origin, set_capture_scale
 from routines.base import WAIT, RECOVER
 from routines.click_action import ClickAction
 from routines.click_step import ClickStep
 from routines.target import Target
+
+
+@pytest.fixture(autouse=True)
+def _isolate_capture_globals():
+    set_capture_origin(0, 0)
+    set_capture_scale(1.0, 1.0)
+    yield
+    set_capture_origin(0, 0)
+    set_capture_scale(1.0, 1.0)
 
 
 def _step(rules, **kwargs) -> ClickStep:
@@ -95,8 +107,6 @@ def test_and_target_requires_all_templates(fake_screen):
 
 
 def test_scroll_until_match_scrolls_while_not_found(fake_screen):
-    from core.screen_bot import set_capture_origin
-
     set_capture_origin(5, 5)
     target = Target("templates/x/A.png", scroll_point=(10, 20), scrollValue=-5)
     step = _step([target])
@@ -110,8 +120,6 @@ def test_scroll_until_match_scrolls_while_not_found(fake_screen):
 
 
 def test_scroll_until_match_then_clicks_without_post_scroll(fake_screen):
-    from core.screen_bot import set_capture_origin
-
     set_capture_origin(0, 0)
     target = Target("templates/x/A.png", scroll_point=(10, 20), scrollValue=-5)
     step = _step([target])

@@ -108,18 +108,28 @@ def test_preview_unavailable_without_screen_bot(
     assert controller.get_preview() == {"enabled": False, "mode": "snapshot"}
 
 
-def test_start_when_already_active_warns(controller, fake_logger):
+def test_start_when_already_active_warns(controller, fake_logger, monkeypatch):
     from core.state_manager import BotState
 
+    dispatched = []
+    monkeypatch.setattr(controller, "_build_and_start", lambda *a, **k: dispatched.append(a))
     controller.state_manager.state = BotState.RUNNING
     controller.start()
+    assert controller.state_manager.state == BotState.RUNNING
+    assert dispatched == []
     assert any("already running" in msg for msg in fake_logger.messages("WARN"))
 
 
-def test_start_with_empty_chain_warns(tmp_config, controller, fake_logger):
+def test_start_with_empty_chain_warns(tmp_config, controller, fake_logger, monkeypatch):
+    from core.state_manager import BotState
+
     with open(bc.CONFIG_FILE, "w", encoding="utf-8") as f:
         json.dump({"routines": []}, f)
+    dispatched = []
+    monkeypatch.setattr(controller, "_build_and_start", lambda *a, **k: dispatched.append(a))
     controller.start()
+    assert controller.state_manager.state != BotState.RUNNING
+    assert dispatched == []
     assert any("No routines" in msg for msg in fake_logger.messages("WARN"))
 
 
@@ -147,11 +157,19 @@ def test_chain_advances_then_repeats_then_cleans_up(monkeypatch, controller):
 
 
 def test_routine_abort_triggers_cleanup(monkeypatch, controller):
+    from core.state_manager import BotState
+
     monkeypatch.setattr(bc.threading, "Thread", _ImmediateThread)
     cleaned = []
     monkeypatch.setattr(controller, "_cleanup", lambda: cleaned.append(True))
-    controller._on_routine_abort("x")
+    restarted = []
+    monkeypatch.setattr(controller, "_build_and_start", lambda *a, **k: restarted.append(a))
+    controller._chain = ["a", "b"]
+    controller._chain_idx = 0
+    controller._on_routine_abort("a")
+    assert controller.state_manager.state == BotState.STOPPED
     assert cleaned == [True]
+    assert restarted == []
 
 
 def test_cleanup_resets_to_idle(controller):
@@ -210,9 +228,10 @@ def test_autofill_skips_when_tab_name_present(tmp_plans, controller):
     assert pl.get_plan("p2")["config"]["tab_name"] == "Existing"
 
 
-def test_get_routines_shape(tmp_config, controller):
+def test_get_routines_shape(tmp_plans, tmp_config, controller):
     data = controller.get_routines()
     assert {"routines", "labels", "current", "chain", "repeat"} <= set(data)
+    assert data["labels"] == {}
 
 
 def test_get_config_legacy_routine_key(tmp_config, controller):
@@ -399,12 +418,13 @@ def test_next_step_without_targets_fails(patched_controller):
     assert result["ok"] is False
 
 
-def test_bot_start_stops_recording(monkeypatch, patched_controller):
+def test_bot_start_stops_recording(monkeypatch, tmp_plans, patched_controller):
     monkeypatch.setattr(bc, "ROUTINES", {})
     patched_controller.start_recording()
     patched_controller._recorder.accept_target(["crop"], "left_click")
     patched_controller.start()
     assert patched_controller._recorder.state == "IDLE"
+    assert bc.get_plan("recorded") is not None
 
 
 def test_unique_plan_name_collision(tmp_plans, patched_controller):

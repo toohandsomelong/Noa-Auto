@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import base64
+import types
 
 import cv2
 import numpy as np
 
 from core.match_result import MatchResult
 from core.screen_bot import ScreenBot, _load_template, _match, resolve_capture_region
-from core.state_manager import StateManager
+from core.state_manager import BotState, StateManager
 
 
 class StubStep:
@@ -19,10 +20,11 @@ class StubStep:
 
 
 class StubRoutine:
-    def __init__(self, step=None, name="R") -> None:
+    def __init__(self, step=None, name="R", plan_key=None) -> None:
         self.done = False
         self._step = step
         self.name = name
+        self.plan_key = plan_key
 
     def current_step(self):
         return self._step
@@ -44,10 +46,18 @@ def test_match_finds_exact_crop():
 
 
 def test_match_below_threshold_returns_none():
-    rng = np.random.default_rng(1)
-    screen = rng.integers(0, 256, (60, 60, 3), dtype=np.uint8)
-    template = screen[20:35, 20:35].copy()
-    assert _match(screen, template, 1.1, grayscale=False) is None
+    screen = np.zeros((60, 60, 3), dtype=np.uint8)
+    template = np.zeros((15, 15, 3), dtype=np.uint8)
+    template[:, :7] = 255
+    screen[20:35, 20:35] = template
+    screen[22:25, 22:25] = 120  # perturb the patch: real match, not exact
+
+    found = _match(screen, template, 0.0, grayscale=False)
+    assert found is not None
+    assert 0.5 < found.confidence < 1.0
+
+    assert _match(screen, template, found.confidence + 0.01, grayscale=False) is None
+    assert _match(screen, template, 0.5, grayscale=False) is not None
 
 
 def test_load_template_missing_returns_none(tmp_path):
@@ -182,11 +192,37 @@ def test_start_routine_clears_preview_when_enabled():
     assert frames == [{"action": "clear"}]
 
 
-def test_check_interval_is_mutable_at_runtime():
-    bot = _bot()
-    assert bot.check_interval == 0.5
-    bot.check_interval = 1.25
-    assert bot.check_interval == 1.25
+def test_check_interval_is_mutable_at_runtime(fake_screen, monkeypatch):
+    import core.screen_bot as sb
+
+    class _Sct:
+        monitors = [{"left": 0, "top": 0, "width": 1920, "height": 1080}]
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(sb, "mss", types.SimpleNamespace(mss=lambda: _Sct()))
+    bot = _bot(preview=False)
+    bot.state_manager.state = BotState.RUNNING
+
+    times: list[float] = []
+
+    def capture(sct=None, region=None):
+        times.append(round(fake_screen.clock.now, 3))
+        fake_screen.clock.now += 0.02
+        if len(times) == 2:
+            bot.check_interval = 1.0
+        if len(times) >= 4:
+            bot._stop_event.set()
+        return "screen"
+
+    monkeypatch.setattr(sb, "_capture", capture)
+    bot._run()
+
+    gaps = [round(times[i + 1] - times[i], 2) for i in range(len(times) - 1)]
+    assert len(times) == 4
+    assert 0.5 <= gaps[0] <= 0.55  # default 0.5s cadence
+    assert all(1.0 <= g <= 1.05 for g in gaps[1:])  # mutated to 1.0s mid-run
 
 
 def test_step_signal_emitted_once_per_step_change(fake_logger):
@@ -233,6 +269,35 @@ def test_step_signal_resets_on_start_routine(fake_logger):
     bot.start_routine(StubRoutine(StubStep(), name="B"))
     bot._maybe_signal_step()
     assert steps[-1]["routine"] == "B"
+
+
+def test_step_signal_prefers_plan_key_over_name(fake_logger):
+    bot = _bot(fake_logger, preview=False)
+    steps = []
+    bot.on_step = steps.append
+    bot.start_routine(StubRoutine(StubStep(label="S0"), name="Monies", plan_key="recorded 2211"))
+    bot._maybe_signal_step()
+    assert steps[0]["routine"] == "recorded 2211"
+
+
+def test_step_signal_identifier_is_a_registry_key(tmp_plans, fake_logger):
+    import routines.plan_loader as pl
+    from routines import list_plan_names
+
+    pl.save_plan(
+        "recorded 2211",
+        {"name": "Monies", "steps": [{"type": "click", "label": "S0"}]},
+    )
+    routine = pl.build_routine_from_plan("recorded 2211", fake_logger)
+    assert routine is not None
+
+    bot = _bot(fake_logger, preview=False)
+    emitted = []
+    bot.on_step = emitted.append
+    bot.start_routine(routine)
+    bot._maybe_signal_step()
+
+    assert emitted[0]["routine"] in list_plan_names()
 
 
 def test_resolve_capture_region_uses_focus_watcher_hwnd(fake_win32):

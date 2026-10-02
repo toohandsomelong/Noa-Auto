@@ -153,4 +153,4 @@ def test_click_point_scales_with_capture_scale():
     sb.set_capture_scale(1.5, 2.0)
     m = MatchResult(location=(10, 10), size=(20, 10), confidence=0.97)
     point = ClickStep._target_point(m, Target("templates/x.png", offset_x=5, offset_y=3))
-    assert point == (5 + int((10 + 10 + 5) * 1.5), 10 + int((10 + 5 + 3) * 2.0))
+    assert point == (42, 46)

@@ -174,6 +174,7 @@ def build_routine_from_plan(name: str, logger: Any) -> Routine | None:
         logger,
         config=config,
         interrupt_steps=interrupt_steps or None,
+        plan_key=name,
     )
 
 

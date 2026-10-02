@@ -147,17 +147,19 @@ def test_target_kwargs_maps_all_fields():
             "label": "L",
         }
     )
-    assert kwargs["template"] == ["templates/x/A.png", "templates/x/B.png"]
-    assert kwargs["action"] is ClickAction.RIGHT_CLICK
-    assert kwargs["scrollValue"] == -100
-    assert kwargs["scroll_point"] == [10, 20]
-    assert kwargs["goto"] == 3
-    assert kwargs["offset_x"] == 1
-    assert kwargs["offset_y"] == 2
-    assert kwargs["stay_on_confirm"] is True
-    assert kwargs["threshold"] == 0.9
-    assert kwargs["grayscale"] is False
-    assert kwargs["label"] == "L"
+    assert kwargs == {
+        "template": ["templates/x/A.png", "templates/x/B.png"],
+        "action": ClickAction.RIGHT_CLICK,
+        "scrollValue": -100,
+        "scroll_point": [10, 20],
+        "goto": 3,
+        "offset_x": 1,
+        "offset_y": 2,
+        "stay_on_confirm": True,
+        "threshold": 0.9,
+        "grayscale": False,
+        "label": "L",
+    }
 
 
 def test_target_kwargs_drops_none_values():
@@ -192,6 +194,7 @@ def test_build_routine_from_plan_builds_steps_and_interrupts(tmp_plans):
     routine = pl.build_routine_from_plan("full", None)
     assert routine is not None
     assert routine.name == "Full"
+    assert routine.plan_key == "full"
     assert len(routine.steps) == 1
     assert len(routine._interrupt_steps) == 1
     assert routine.config.delay == 0.1

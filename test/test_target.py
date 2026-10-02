@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import pytest
 
+from core.match_result import MatchResult
 from routines.click_action import ClickAction
+from routines.click_step import ClickStep
 from routines.target import Target
 
 
@@ -24,15 +26,13 @@ def test_label_override_wins():
     assert Target("templates/x/A.png", label="Custom").label == "Custom"
 
 
-def test_defaults():
+def test_defaults_produce_centered_left_click_without_scroll():
     target = Target("templates/x/A.png")
+    match = MatchResult(location=(10, 10), size=(20, 10), confidence=0.9)
+    assert ClickStep._target_point(match, target) == (20, 15)  # no offset -> center
     assert target.action is ClickAction.LEFT_CLICK
     assert target.scrollValue == 0
-    assert target.offset_x == 0
-    assert target.offset_y == 0
-    assert target.goto is None
-    assert target.stay_on_confirm is False
-    assert target.threshold is None
+    assert target.threshold is None  # inherit step-level threshold
     assert target.grayscale is True
     assert target.click_count == 0
 

@@ -16,8 +16,11 @@ class Routine:
         logger: Any,
         config: RoutineConfig,
         interrupt_steps: list[Step] | None = None,
+        *,
+        plan_key: str | None = None,
     ) -> None:
         self.name = name
+        self.plan_key = plan_key
         self.steps = steps
         self.logger = logger
         self.config = config

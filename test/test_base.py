@@ -71,5 +71,10 @@ def test_click_exception_without_logger_does_not_raise(fpag):
     assert base.do_click((1, 2)) is False
 
 
+def test_print_log_error_logs_with_logger(fake_logger):
+    assert base.printLogError("hello", fake_logger) is None
+    assert fake_logger.messages("ERR") == ["hello"]
+
+
 def test_print_log_error_without_logger_is_noop():
-    base.printLogError("hello", None)
+    assert base.printLogError("hello", None) is None

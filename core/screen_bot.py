@@ -322,7 +322,7 @@ class ScreenBot:
         step = getattr(routine, "current_step", lambda: None)()
         if step is None:
             return
-        name = getattr(routine, "name", None)
+        name = getattr(routine, "plan_key", None) or getattr(routine, "name", None)
         index = getattr(step, "index", None)
         label = getattr(step, "label", None)
         key = (name, index, label)

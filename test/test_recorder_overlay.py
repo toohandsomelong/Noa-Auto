@@ -12,7 +12,6 @@ from core.recorder_overlay import (
     ACTION_LEFT,
     ACTION_RIGHT,
     ACTION_SCROLL,
-    CAPTURE_HIDE_DELAY_MS,
     OverlayController,
     RecorderOverlayTk,
 )
@@ -392,7 +391,7 @@ def test_do_capture_logs_failure(fake_tk, fake_logger):
 def test_request_crop_schedules_capture(fake_tk, fake_logger):
     view = RecorderOverlayTk(queue.Queue(), OverlayController(), logger=fake_logger)
     view._request_crop()
-    assert view._root.after_calls[-1][0] == CAPTURE_HIDE_DELAY_MS
+    assert view._root.after_calls[-1][0] == 120
     assert view._root.after_calls[-1][1] == view._do_capture
 
 
