@@ -16,8 +16,8 @@ from core.recorder import Recorder
 from core.recorder_overlay import RecorderOverlay
 from core.screen_bot import ScreenBot
 from core.state_manager import BotState, StateManager
-from routines import ROUTINES, refresh_routines
-from routines.plan_loader import get_plan, list_plan_labels, save_plan
+from engine import PLANS, refresh_plans
+from engine.plan_loader import get_plan, list_plan_labels, save_plan
 
 CONFIG_FILE = "config.json"
 
@@ -153,11 +153,11 @@ class BotController:
             except Exception:
                 pass
 
-    def _set_active_target(self, game_path: str | None, tab_name: str | None, routine: str | None) -> None:
+    def _set_active_target(self, game_path: str | None, tab_name: str | None, plan: str | None) -> None:
         self._active_target = {
             "game_path": game_path or None,
             "tab_name": tab_name or None,
-            "routine": routine or None,
+            "plan": plan or None,
         }
         self._emit_config()
 
@@ -201,7 +201,7 @@ class BotController:
         data["name"] = name
         try:
             save_plan(name, data)
-            refresh_routines()
+            refresh_plans()
         except Exception as e:
             self.logger.error(f"Failed to save recorded plan: {e}")
             return {"ok": False, "error": str(e)}
@@ -330,10 +330,10 @@ class BotController:
             self.stop_recording()
 
         config = self.get_config()
-        routines = config.get("routines", [])
-        chain = self._validate_routines(routines)
+        plans = config.get("plans", [])
+        chain = self._validate_plans(plans)
         if not chain:
-            self.logger.warning("No routines configured")
+            self.logger.warning("No plans configured")
             return
 
         first = self._load_plan(chain[0])
@@ -423,8 +423,7 @@ class BotController:
             self.logger.state("PAUSED — game unfocused")
 
         if self.screen_bot is not None:
-            self.screen_bot.on_routine_done = self._on_routine_done
-            self.screen_bot.on_routine_abort = self._on_routine_abort
+            self.screen_bot.on_plan_done = self._on_plan_done
             self.screen_bot.on_frame = self._on_frame
             self.screen_bot.on_step = self._on_step
             self.screen_bot.start()
@@ -473,7 +472,7 @@ class BotController:
             config["tab_name"] = title
             data["config"] = config
             save_plan(plan_name, data)
-            refresh_routines()
+            refresh_plans()
             self.logger.info(f"Autofilled tab_name '{title}' into plan '{plan_name}'")
         except Exception as e:
             self.logger.error(f"Failed to autofill tab_name: {e}")
@@ -487,8 +486,7 @@ class BotController:
         self.focus_watcher.set_target("", None, None)
 
         if self.screen_bot is not None:
-            self.screen_bot.on_routine_done = self._on_routine_done
-            self.screen_bot.on_routine_abort = self._on_routine_abort
+            self.screen_bot.on_plan_done = self._on_plan_done
             self.screen_bot.on_frame = self._on_frame
             self.screen_bot.on_step = self._on_step
             self.screen_bot.start()
@@ -497,55 +495,55 @@ class BotController:
 
     def _kickoff_chain(self) -> None:
         if not self._chain:
-            self.logger.warning("No routines configured")
+            self.logger.warning("No plans configured")
             return
         self._build_and_start(self._chain[0], is_first=True)
 
-    def _validate_routines(self, routines: Any) -> list[str]:
-        if routines is None:
+    def _validate_plans(self, plans: Any) -> list[str]:
+        if plans is None:
             return []
-        if isinstance(routines, str):
-            routines = [routines]
-        if not isinstance(routines, list):
-            self.logger.error(f"Invalid routines config: {routines!r}")
+        if isinstance(plans, str):
+            plans = [plans]
+        if not isinstance(plans, list):
+            self.logger.error(f"Invalid plans config: {plans!r}")
             return []
 
         valid: list[str] = []
-        for name in routines:
-            if name in ROUTINES:
+        for name in plans:
+            if name in PLANS:
                 valid.append(name)
             else:
-                self.logger.error(f"Unknown routine: {name}")
+                self.logger.error(f"Unknown plan: {name}")
         return valid
 
     def _build_and_start(self, name: str, is_first: bool = False) -> None:
-        builder = ROUTINES.get(name)
+        builder = PLANS.get(name)
         if builder is None:
-            self.logger.error(f"Cannot build unknown routine: {name}")
+            self.logger.error(f"Cannot build unknown plan: {name}")
             return
         try:
-            routine = builder(self.logger)
+            plan = builder(self.logger)
         except Exception as e:
-            self.logger.error(f"Failed to build routine '{name}': {e}")
+            self.logger.error(f"Failed to build plan '{name}': {e}")
             return
 
-        if routine is None:
-            self.logger.error(f"Routine '{name}' could not be built")
+        if plan is None:
+            self.logger.error(f"PlanRunner '{name}' could not be built")
             return
 
         if not is_first:
-            self._apply_routine_target(name, routine)
+            self._apply_plan_target(name, plan)
 
         if self.screen_bot is None:
             return
-        self.screen_bot.start_routine(routine)
-        self.logger.info(f"Routine '{name}' started")
+        self.screen_bot.start_plan(plan)
+        self.logger.info(f"PlanRunner '{name}' started")
 
-    def _apply_routine_target(self, name: str, routine: Any) -> None:
-        if not hasattr(routine, "config"):
+    def _apply_plan_target(self, name: str, plan: Any) -> None:
+        if not hasattr(plan, "config"):
             return
-        tab_name = routine.config.tab_name if hasattr(routine.config, "tab_name") else None
-        game_path = routine.config.game_path if hasattr(routine.config, "game_path") else None
+        tab_name = plan.config.tab_name if hasattr(plan.config, "tab_name") else None
+        game_path = plan.config.game_path if hasattr(plan.config, "game_path") else None
 
         if not tab_name and not game_path:
             return
@@ -557,7 +555,7 @@ class BotController:
                 tab_name,
                 name,
             )
-            self.logger.info(f"Routine '{name}' target switched to tab_name={tab_name!r}")
+            self.logger.info(f"PlanRunner '{name}' target switched to tab_name={tab_name!r}")
             return
 
         if game_path:
@@ -566,9 +564,9 @@ class BotController:
                 self._active_target.get("tab_name") if self._active_target else None,
                 name,
             )
-            self.logger.info(f"Routine '{name}' expects game_path={game_path!r} (launch ignored mid-chain)")
+            self.logger.info(f"PlanRunner '{name}' expects game_path={game_path!r} (launch ignored mid-chain)")
 
-    def _on_routine_done(self, name: str) -> None:
+    def _on_plan_done(self, name: str) -> None:
         with self._chain_lock:
             self._chain_idx += 1
 
@@ -584,11 +582,6 @@ class BotController:
                 return
 
         self.logger.state("Chain complete")
-        threading.Thread(target=self._cleanup, daemon=True).start()
-
-    def _on_routine_abort(self, name: str) -> None:
-        self.logger.state(f"Routine '{name}' aborted — chain halted")
-        self.state_manager.state = BotState.STOPPED
         threading.Thread(target=self._cleanup, daemon=True).start()
 
     def _monitor_process(self) -> None:
@@ -628,10 +621,12 @@ class BotController:
 
     def get_config(self) -> dict:
         config = self._load_config()
-        routines = config.get("routines")
-        if routines is None:
+        plans = config.get("plans")
+        if plans is None:
+            plans = config.get("routines")
+        if plans is None:
             legacy = config.get("routine", "team_trials")
-            routines = [legacy] if legacy else []
+            plans = [legacy] if legacy else []
         repeat = config.get("repeat", 1)
         try:
             repeat = int(repeat)
@@ -646,23 +641,23 @@ class BotController:
             check_interval = 0.5
         check_interval = max(0.05, min(10.0, check_interval))
         return {
-            "routines": routines,
+            "plans": plans,
             "repeat": repeat,
             "check_interval": check_interval,
         }
 
     def set_config(
         self,
-        routines: Any = None,
+        plans: Any = None,
         repeat: Any = None,
         check_interval: Any = None,
     ) -> None:
         existing = self._load_config()
-        if routines is not None:
-            if isinstance(routines, str):
-                routines = [routines]
-            if isinstance(routines, list):
-                existing["routines"] = routines
+        if plans is not None:
+            if isinstance(plans, str):
+                plans = [plans]
+            if isinstance(plans, list):
+                existing["plans"] = plans
         if repeat is not None:
             try:
                 repeat_value = int(repeat)
@@ -681,13 +676,13 @@ class BotController:
                 self.screen_bot.check_interval = interval_value
         self._save_config(existing)
 
-    def get_routines(self) -> dict:
+    def get_plans(self) -> dict:
         config = self.get_config()
         return {
-            "routines": list(ROUTINES.keys()),
+            "plans": list(PLANS.keys()),
             "labels": list_plan_labels(),
-            "current": config["routines"][0] if config["routines"] else "",
-            "chain": config["routines"],
+            "current": config["plans"][0] if config["plans"] else "",
+            "chain": config["plans"],
             "repeat": config["repeat"],
         }
 

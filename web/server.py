@@ -19,8 +19,8 @@ import win32api
 import win32event
 import winerror
 
-from routines import ROUTINES, refresh_routines
-from routines.plan_loader import delete_plan, get_plan, save_plan
+from engine import PLANS, refresh_plans
+from engine.plan_loader import delete_plan, get_plan, save_plan
 from web.bot_controller import BotController
 
 MUTEX_NAME = "Global\\NoaAutoSingleInstance"
@@ -130,11 +130,11 @@ def create_app(controller: BotController) -> FastAPI:
 
     @app.put("/api/config")
     async def set_config(body: dict) -> JSONResponse:
-        routines = body.get("routines")
+        plans = body.get("plans")
         repeat = body.get("repeat")
         check_interval = body.get("check_interval")
         controller.set_config(
-            routines=routines, repeat=repeat, check_interval=check_interval
+            plans=plans, repeat=repeat, check_interval=check_interval
         )
         return JSONResponse(content={"ok": True})
 
@@ -194,10 +194,10 @@ def create_app(controller: BotController) -> FastAPI:
             return JSONResponse(status_code=404, content={"error": "Not found"})
         return FileResponse(filepath)
 
-    @app.get("/api/routines")
-    async def list_routines() -> JSONResponse:
-        refresh_routines()
-        return JSONResponse(content=controller.get_routines())
+    @app.get("/api/plans")
+    async def list_plans() -> JSONResponse:
+        refresh_plans()
+        return JSONResponse(content=controller.get_plans())
 
     @app.get("/api/plan/{name}")
     async def get_plan_data(name: str) -> JSONResponse:
@@ -214,11 +214,11 @@ def create_app(controller: BotController) -> FastAPI:
         name = body.get("name", "")
         try:
             save_plan(name, body)
-            refresh_routines()
+            refresh_plans()
         except Exception as e:
             return JSONResponse(status_code=400, content={"error": str(e)})
         return JSONResponse(
-            content={"ok": True, "name": name, "routines": list(ROUTINES.keys())}
+            content={"ok": True, "name": name, "plans": list(PLANS.keys())}
         )
 
     @app.put("/api/plan/{name}")
@@ -227,11 +227,11 @@ def create_app(controller: BotController) -> FastAPI:
             if get_plan(name) is None:
                 return JSONResponse(status_code=404, content={"error": "Plan not found"})
             save_plan(name, body)
-            refresh_routines()
+            refresh_plans()
         except Exception as e:
             return JSONResponse(status_code=400, content={"error": str(e)})
         return JSONResponse(
-            content={"ok": True, "name": name, "routines": list(ROUTINES.keys())}
+            content={"ok": True, "name": name, "plans": list(PLANS.keys())}
         )
 
     @app.delete("/api/plan/{name}")
@@ -242,8 +242,8 @@ def create_app(controller: BotController) -> FastAPI:
             return JSONResponse(status_code=400, content={"error": str(e)})
         if not deleted:
             return JSONResponse(status_code=404, content={"error": "Plan not found"})
-        refresh_routines()
-        return JSONResponse(content={"ok": True, "routines": list(ROUTINES.keys())})
+        refresh_plans()
+        return JSONResponse(content={"ok": True, "plans": list(PLANS.keys())})
 
     @app.websocket("/ws")
     async def ws_endpoint(ws: WebSocket) -> None:

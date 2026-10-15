@@ -6,17 +6,17 @@ from __future__ import annotations
 
 from typing import Any
 
-from routines.click_action import ClickAction
-from routines.click_step import ClickStep
-from routines.config import RoutineConfig
-from routines.routine import Routine
-from routines.step import Step
-from routines.target import Target
+from engine.click_action import ClickAction
+from engine.click_step import ClickStep
+from engine.config import PlanConfig
+from engine.plan_runner import PlanRunner
+from engine.step import Step
+from engine.target import Target
 
 
-CONFIG = RoutineConfig(delay=0.5, max_step_retry=15, timeout=15.0)
+CONFIG = PlanConfig(delay=0.5)
 
-def build_team_trials_routine(logger: Any) -> Routine:
+def build_team_trials_plan(logger: Any) -> PlanRunner:
     select_opponent_index = 4
     home_index = 14
 
@@ -75,4 +75,4 @@ def build_team_trials_routine(logger: Any) -> Routine:
         ClickStep([Target("templates/main/home.png")]),
     ]
 
-    return Routine("team_trials", steps, logger, config=CONFIG)
+    return PlanRunner("team_trials", steps, logger, config=CONFIG)

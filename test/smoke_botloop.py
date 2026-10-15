@@ -1,13 +1,13 @@
 from __future__ import annotations
 
-"""Smoke test for ScreenBot._run capture pacing -- no real screen, no templates.
+"""Smoke test for ScreenBot._run capture pacing and self-anchoring -- no real screen.
 
 The real ``ScreenBot._run`` loop is driven in-thread with a fake clock (``time``),
 a fake ``mss`` capture, and simulated template matching, so we can verify the
 actual loop semantics: 500ms minimum cycle measured AFTER the work, additive
-``delay``/``ready_delay``, and reaction to screen changes between captures.
+``delay``/``ready_delay``, and how the plan reacts to screen changes.
 
-Run from anywhere:
+Run as part of pytest, or standalone:
     "C:\\Users\\trucn\\miniconda3\\python.exe" test\\smoke_botloop.py
 """
 
@@ -20,16 +20,15 @@ import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import routines.click_step as cs_mod
-import routines.step as step_mod
-import routines.routine as routine_mod
+import engine.click_step as cs_mod
+import engine.plan_runner as plan_runner_mod
 import core.screen_bot as sb_mod
 from core.match_result import MatchResult
 from core.state_manager import BotState, StateManager
-from routines.click_step import ClickStep
-from routines.config import RoutineConfig
-from routines.routine import Routine
-from routines.target import Target
+from engine.click_step import ClickStep
+from engine.config import PlanConfig
+from engine.plan_runner import PlanRunner
+from engine.target import Target
 
 
 class FakeLogger:
@@ -95,6 +94,7 @@ CTRL = {
 
 
 def fake_capture(sct: object | None = None, region: object | None = None) -> object:
+    """Advance the fake clock, expose the timeline's templates, and stop at the limit."""
     FC.now += 0.02
     visible.clear()
     if CTRL["timeline"] is not None:
@@ -108,14 +108,14 @@ def fake_capture(sct: object | None = None, region: object | None = None) -> obj
 
 
 def _apply_patches(set_attr: Callable[..., None]) -> None:
+    """Install fake clock/capture/matching/clicking for the loop."""
     set_attr(sb_mod, "time", FC)
     set_attr(cs_mod, "time", FC)
-    set_attr(step_mod, "time", FC)
-    set_attr(routine_mod, "time", FC)
+    set_attr(plan_runner_mod, "time", FC)
     set_attr(sb_mod, "_capture", fake_capture)
     set_attr(sb_mod, "mss", types.SimpleNamespace(mss=lambda: _FakeSct()))
     set_attr(cs_mod, "match_template", fake_match)
-    set_attr(routine_mod, "match_template", fake_match)
+    set_attr(plan_runner_mod, "match_template", fake_match)
     set_attr(cs_mod, "do_click", fake_click)
 
 
@@ -129,11 +129,11 @@ def run(
     *,
     delay: float = 0.0,
     ready: float = 0.0,
-    max_step_retry: int = 1000,
     num_steps: int = 1,
     timeline: list[set[str]] | None = None,
     limit: int = 30,
 ) -> dict:
+    """Drive the real ScreenBot loop over a timeline and report the outcome."""
     FC.now = 0.0
     visible.clear()
     clicks.clear()
@@ -141,23 +141,20 @@ def run(
     state_mgr = StateManager()
     bot = sb_mod.ScreenBot(FakeLogger(), state_mgr, None, check_interval=0.5)
     events: list[tuple[str, str]] = []
-    bot.on_routine_done = lambda n: events.append(("done", n))
-    bot.on_routine_abort = lambda n: events.append(("abort", n))
+    bot.on_plan_done = lambda n: events.append(("done", n))
 
     steps = [ClickStep([Target("templates/x/B.png")], ready_delay=ready)]
     if num_steps >= 2:
         steps.append(ClickStep([Target("templates/x/C.png")]))
-    routine = Routine(
+    if num_steps >= 3:
+        steps.append(ClickStep([Target("templates/x/D.png")]))
+    plan = PlanRunner(
         name,
         steps,
         logger=None,
-        config=RoutineConfig(
-            delay=delay,
-            max_step_retry=max_step_retry,
-            timeout=None,
-        ),
+        config=PlanConfig(delay=delay),
     )
-    bot.start_routine(routine)
+    bot.start_plan(plan)
 
     CTRL["bot"] = bot
     CTRL["limit"] = limit
@@ -171,88 +168,114 @@ def run(
     return {
         "clicks": list(clicks),
         "events": events,
-        "index": routine._index,
-        "done": routine.done,
-        "aborted": routine.aborted,
+        "index": plan._index,
+        "done": plan.done,
         "now": FC.now,
     }
 
 
-def scenario_persist_reclicks() -> None:
-    print("A: target stays on screen -> re-clicks once per ~500ms (no faster)")
-    r = run("a", timeline=[{"B.png"}], limit=5)
-    labels = [c[0] for c in r["clicks"]]
-    times = [c[1] for c in r["clicks"]]
-    assert labels == ["B.png"] * 5, f"expected 5 B clicks, got {labels}"
-    gaps = [round(times[i + 1] - times[i], 2) for i in range(len(times) - 1)]
-    assert all(0.49 <= g <= 0.55 for g in gaps), f"expected ~0.5s gaps, got {gaps}"
-    assert r["index"] == 0, f"expected to stay on step 0, got {r['index']}"
-    print(f"    PASS: clicks every {gaps} (capture pace = 500ms)")
+class TestScreenBotLoop:
+    """Suite: end-to-end ScreenBot loop — pacing, delays, and self-anchoring reactions."""
 
+    @pytest.mark.positive
+    def test_pacing_reclicks(self):
+        """A persistent target is re-clicked once per ~500ms cycle, never faster."""
+        r = run("a", timeline=[{"B.png"}], limit=5)
+        labels = [c[0] for c in r["clicks"]]
+        times = [c[1] for c in r["clicks"]]
+        assert labels == ["B.png"] * 5, f"expected 5 B clicks, got {labels}"
+        gaps = [round(times[i + 1] - times[i], 2) for i in range(len(times) - 1)]
+        assert all(0.49 <= g <= 0.55 for g in gaps), f"expected ~0.5s gaps, got {gaps}"
+        assert r["index"] == 0
 
-def scenario_delay_additive() -> None:
-    print("B: delay=0.2 ADDS on top of 500ms (spacing ~0.72s)")
-    r = run("b", delay=0.2, timeline=[{"B.png"}], limit=5)
-    times = [c[1] for c in r["clicks"]]
-    gaps = [round(times[i + 1] - times[i], 2) for i in range(len(times) - 1)]
-    assert all(0.70 <= g <= 0.75 for g in gaps), f"expected ~0.72s gaps, got {gaps}"
-    print(f"    PASS: gaps {gaps} = 0.2 delay + ~0.02 capture + 0.5 interval")
+    @pytest.mark.positive
+    def test_delay_additive(self):
+        """delay=0.2 sits on top of the 500ms cadence (spacing ~0.72s)."""
+        r = run("b", delay=0.2, timeline=[{"B.png"}], limit=5)
+        times = [c[1] for c in r["clicks"]]
+        gaps = [round(times[i + 1] - times[i], 2) for i in range(len(times) - 1)]
+        assert all(0.70 <= g <= 0.75 for g in gaps), f"expected ~0.72s gaps, got {gaps}"
 
+    @pytest.mark.positive
+    def test_verified_advance(self):
+        """Target vanished and next step visible anchors the runner forward exactly once."""
+        r = run("c", num_steps=2, timeline=[{"B.png"}, {"C.png"}, {"C.png"}], limit=8)
+        labels = [c[0] for c in r["clicks"]]
+        assert labels.count("B.png") == 1, f"expected exactly one B click, got {labels}"
+        assert labels[0] == "B.png"
+        assert labels[1] == "C.png"
+        assert r["index"] == 1
 
-def scenario_vanish_verified_advance() -> None:
-    print("C: target vanished, next step visible -> verified advance, no stale click")
-    r = run("c", num_steps=2, timeline=[{"B.png"}, {"C.png"}, {"C.png"}], limit=6)
-    labels = [c[0] for c in r["clicks"]]
-    assert labels.count("B.png") == 1, f"expected exactly one B click, got {labels}"
-    assert labels[0] == "B.png", f"expected B first, got {labels}"
-    assert labels[1] == "C.png", f"expected C after advance, got {labels}"
-    assert r["index"] == 1, f"expected index 1, got {r['index']}"
-    print("    PASS: B clicked once, advanced to C (C re-clicked while visible)")
+    @pytest.mark.positive
+    def test_runner_completes(self):
+        """A single terminal step finishes and fires on_plan_done."""
+        r = run("f", num_steps=1, timeline=[{"B.png"}, set()], limit=8)
+        assert [c[0] for c in r["clicks"]] == ["B.png"]
+        assert r["done"] is True
+        assert r["events"] == [("done", "f")]
 
+    @pytest.mark.positive
+    def test_ready_delay_honored(self):
+        """ready_delay=1.2 delays the first action to at least 1.2s."""
+        r = run("h", ready=1.2, timeline=[{"B.png"}], limit=12)
+        first = r["clicks"][0][1]
+        assert first >= 1.2, f"first click at {first}s is before ready_delay"
+        assert first <= 2.0, f"first click at {first}s too late"
 
-def scenario_vanish_loading_advance() -> None:
-    print("D: target vanished + next NOT visible (loading) -> advance anyway, no click")
-    r = run("d", num_steps=2, timeline=[{"B.png"}, set(), set()], limit=6)
-    assert [c[0] for c in r["clicks"]] == ["B.png"], f"got {[c[0] for c in r['clicks']]}"
-    assert r["index"] == 1, f"expected index 1 (loading advance), got {r['index']}"
-    print("    PASS: no second click during transition; advanced on 'both gone'")
+    @pytest.mark.edge
+    def test_loading_waits_then_anchors(self):
+        """A loading frame with nothing visible is waited out, then the next step is anchored."""
+        r = run("d", num_steps=2, timeline=[{"B.png"}, set(), {"C.png"}, {"C.png"}], limit=10)
+        labels = [c[0] for c in r["clicks"]]
+        assert labels[0] == "B.png"
+        assert labels.count("B.png") == 1
+        assert "C.png" in labels
+        assert r["index"] == 1
 
+    @pytest.mark.edge
+    def test_flicker_does_not_advance(self):
+        """A target that vanishes for one frame then returns is not treated as a transition."""
+        r = run("fl", num_steps=2, timeline=[{"B.png"}, set(), {"B.png"}, {"B.png"}], limit=8)
+        labels = [c[0] for c in r["clicks"]]
+        assert r["index"] == 0, f"flicker must not advance, index={r['index']}"
+        assert "C.png" not in labels, f"next step must not be clicked, got {labels}"
+        assert labels.count("B.png") >= 2, f"expected a re-click after flicker, got {labels}"
 
-def scenario_nothing_visible() -> None:
-    print("E: nothing visible -> zero clicks, is wait-and-watch")
-    r = run("e", num_steps=2, timeline=[set()], limit=6)
-    assert r["clicks"] == [], f"expected no clicks, got {r['clicks']}"
-    assert r["index"] == 0, f"expected to stay at step 0, got {r['index']}"
-    print("    PASS: no blind click when nothing matched")
+    @pytest.mark.edge
+    def test_misclick_back_reanchors(self):
+        """A non-terminal step whose screen returns to an earlier step re-anchors back within a few cycles."""
+        r = run(
+            "mb",
+            num_steps=3,
+            timeline=[
+                {"B.png"},
+                {"C.png"},
+                {"C.png"},
+                {"C.png"},
+                {"B.png"},
+                {"B.png"},
+                {"B.png"},
+            ],
+            limit=10,
+        )
+        labels = [c[0] for c in r["clicks"]]
+        assert "B.png" in labels and "C.png" in labels
+        assert r["index"] == 0, f"expected to re-anchor back to step 0, got {r['index']}"
 
+    @pytest.mark.negative
+    def test_nothing_visible_makes_no_clicks(self):
+        """With nothing matched the loop waits and never clicks blindly."""
+        r = run("e", num_steps=2, timeline=[set()], limit=6)
+        assert r["clicks"] == []
+        assert r["index"] == 0
 
-def scenario_routine_completes() -> None:
-    print("F: single step finished -> on_routine_done fired, routine ends")
-    r = run("f", num_steps=1, timeline=[{"B.png"}, set(), set()], limit=8)
-    assert [c[0] for c in r["clicks"]] == ["B.png"], f"got {[c[0] for c in r['clicks']]}"
-    assert r["done"] is True, "expected done=True"
-    assert r["aborted"] is False, "expected aborted=False"
-    assert r["events"] == [("done", "f")], f"expected on_routine_done, got {r['events']}"
-    print("    PASS: normal completion dispatched on_routine_done")
-
-
-def scenario_never_abort_resync() -> None:
-    print("G: target never transitions -> RECOVER -> resync loops without aborting")
-    r = run("g", max_step_retry=3, timeline=[{"B.png"}], limit=20)
-    assert r["aborted"] is False, "expected never-abort"
-    assert r["done"] is False, "expected routine to keep running"
-    assert len(r["clicks"]) >= 3, f"expected continued retries, got {len(r['clicks'])}"
-    assert r["events"] == [], f"expected no done/abort event, got {r['events']}"
-    print("    PASS: routine kept re-clicking/polling instead of aborting")
-
-
-def scenario_ready_delay_honored() -> None:
-    print("H: ready_delay=1.2 -> first action waited at least 1.2s")
-    r = run("h", ready=1.2, timeline=[{"B.png"}], limit=12)
-    first = r["clicks"][0][1]
-    assert first >= 1.2, f"first click at {first}s is before ready_delay"
-    assert first <= 2.0, f"first click at {first}s too late"
-    print(f"    PASS: first click at {first}s (ready_delay honored, snapped to 500ms grid)")
+    @pytest.mark.negative
+    def test_unknown_screen_stays_lost(self):
+        """An unknown screen after a click keeps scanning without finishing or aborting."""
+        r = run("g", num_steps=2, timeline=[{"B.png"}, set(), set(), set()], limit=20)
+        assert r["done"] is False
+        assert len(r["clicks"]) >= 1
+        assert r["events"] == []
 
 
 def main() -> None:
@@ -261,21 +284,21 @@ def main() -> None:
     print("ScreenBot loop smoke test  (fake clock, simulated capture/matching)")
     print("check_interval=0.5, capture cost=0.02 per iteration")
     print("=" * 78)
-    scenario_persist_reclicks()
-    print()
-    scenario_delay_additive()
-    print()
-    scenario_vanish_verified_advance()
-    print()
-    scenario_vanish_loading_advance()
-    print()
-    scenario_nothing_visible()
-    print()
-    scenario_routine_completes()
-    print()
-    scenario_never_abort_resync()
-    print()
-    scenario_ready_delay_honored()
+    suite = TestScreenBotLoop()
+    for name in (
+        "test_pacing_reclicks",
+        "test_delay_additive",
+        "test_verified_advance",
+        "test_runner_completes",
+        "test_ready_delay_honored",
+        "test_loading_waits_then_anchors",
+        "test_flicker_does_not_advance",
+        "test_misclick_back_reanchors",
+        "test_nothing_visible_makes_no_clicks",
+        "test_unknown_screen_stays_lost",
+    ):
+        getattr(suite, name)()
+        print(f"    PASS: {name}")
     print()
     print("All assertions passed.")
 

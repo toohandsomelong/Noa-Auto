@@ -35,13 +35,13 @@ a browser dashboard, with **no coding required**.
   configurable threshold and grayscale matching.
 - 🌐 **Web dashboard** — control everything from your browser at
   `http://127.0.0.1:6969` (opens automatically on launch). Live logs, live screen
-  preview, and a visual routine editor.
-- 🧩 **No-code routines ("plans")** — automations are simple JSON files. Create and
+  preview, and a visual plan editor.
+- 🧩 **No-code plans** — automations are simple JSON files. Create and
   edit them in the built-in editor, or by hand.
 - 🔀 **Control flow** — jump between steps (`goto`), loop steps, fallback targets,
   and global **interrupt steps** that dismiss popups on any screen plus
   automatic screen re-anchoring (**resync**) when something unexpected happens.
-- ⛓️ **Chaining & repeat** — queue multiple routines in a chain and repeat the
+- ⛓️ **Chaining & repeat** — queue multiple plans in a chain and repeat the
   whole chain N times.
 - 🚀 **Auto game launch / window attach** — set a game path and window title;
   Noa Auto launches it or attaches to a running window (title auto-detected).
@@ -55,7 +55,7 @@ a browser dashboard, with **no coding required**.
    the next step or jumps via `goto`. Interrupt steps (popups) are checked first
    every cycle; a stuck step triggers resync to a visible screen.
 
-A **routine** = ordered list of **steps**; a **step** = list of **targets**
+A **plan** = ordered list of **steps**; a **step** = list of **targets**
 (template image + what to do when found). Templates are just PNG crops of
 buttons/UI elements you take yourself.
 
@@ -80,7 +80,7 @@ Simply open exe if you download exe.
 
 Your browser opens the dashboard automatically (fallback ports: 6967, 6767).
 
-### 2. Record a routine (new)
+### 2. Record a plan (new)
 
 The fastest way to build a plan is the overlay recorder.
 
@@ -102,16 +102,16 @@ Templates are small PNG crops of the buttons you want the bot to find.
 2. Crop the button/UI element out of the snapshot in any image editor.
 3. Save crops under `templates/` (e.g. `templates/mygame/start_button.png`).
 
-### 4. Create a routine
+### 4. Create a plan
 
-Click **Create Routine** in the dashboard and add steps via the editor,
+Click **Create Plan** in the dashboard and add steps via the editor,
 or drop a JSON file into `plans/` (see [Plan JSON reference](#plan-json-reference)).
 
 Minimal example — wait for a start button, click it, then wait for the menu:
 
 ```json
 {
-  "name": "my_first_routine",
+  "name": "my_first_plan",
   "steps": [
     { "type": "click", "targets": [ { "template": "templates/mygame/start_button.png" } ] },
     { "type": "click", "targets": [ { "template": "templates/mygame/menu.png", "goto": 0 } ] }
@@ -120,13 +120,13 @@ Minimal example — wait for a start button, click it, then wait for the menu:
 }
 ```
 
-[ screenshot of the routine editor here ]
+[ screenshot of the plan editor here ]
 
 ### 5. Configure the run
 
 - **Tab Name** — title of the window to attach to (or leave empty).
 - **Game Path** — exe to launch if no window is found (optional).
-- **Active Chain** — ordered routines to run back-to-back.
+- **Active Chain** — ordered plans to run back-to-back.
 - **Repeat** — how many times to run the whole chain.
 
 ### 6. Run
@@ -136,7 +136,7 @@ happening in real time. Hit **Stop** anytime.
 
 ## Plan JSON reference
 
-`plans/<name>.json` — file stem = routine name.
+`plans/<name>.json` — file stem = plan name.
 
 **`config`**
 
@@ -178,10 +178,10 @@ happening in real time. Hit **Stop** anytime.
 **Interrupt steps** — optional `interrupt_steps` list. Each entry is a normal
 click step, but it is checked on **every tick regardless of the current step**
 (use it for dialogs/popups that can appear anywhere). Interrupts never advance
-the routine, and list order is priority — put network/retry first. A popup that
+the plan, and list order is priority — put network/retry first. A popup that
 only ever appears on one screen is better modeled as a target inside that step.
 
-When a step hits `timeout` / `max_step_retry`, the routine enters **resync**: it
+When a step hits `timeout` / `max_step_retry`, the plan enters **resync**: it
 scans for the next step whose targets are visible (forward successors first, the
 stuck step only as a last resort) and resumes there after seeing it on two
 consecutive frames. With `resync_timeout = null` it polls forever; set a value
@@ -197,14 +197,14 @@ to abort instead.
 | Flow gets stuck on random popups | Add the popup's button as a target, or as an interrupt step for popups that appear anywhere |
 | Too fast / misses animations | Increase `delay` / `ready_delay` |
 | Dashboard doesn't open | App already running (single-instance), or ports 6969/6967/6767 are busy |
-| Routine stuck without resyncing | `timeout` / `max_step_retry` disabled (`null`)? Re-enable them |
+| Plan stuck without resyncing | `timeout` / `max_step_retry` disabled (`null`)? Re-enable them |
 
 ## Project structure
 
 ```text
 ├── core/       # state, logging, screen capture + template matching, window management
-├── routines/   # bot steps, enums, config, JSON plan loader
-├── plans/      # your routine JSON files (created via the web UI)
+├── engine/     # plan runner, steps, enums, config, JSON plan loader
+├── plans/      # your plan JSON files (created via the web UI)
 ├── templates/  # your template PNGs
 ├── web/        # FastAPI server + bot orchestrator
 ├── static/     # web dashboard (vanilla JS)

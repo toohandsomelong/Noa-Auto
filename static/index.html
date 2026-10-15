@@ -12,12 +12,12 @@
   <div class="app-main">
     <div class="path-row">
       <label>Game Path:</label>
-      <input type="text" id="path-input" readonly placeholder="(from active routine)">
+      <input type="text" id="path-input" readonly placeholder="(from active plan)">
     </div>
 
     <div class="target-row">
       <label>Tab Name:</label>
-      <input type="text" id="tab-name-input" readonly placeholder="(from active routine)">
+      <input type="text" id="tab-name-input" readonly placeholder="(from active plan)">
     </div>
 
     <div class="control-row">
@@ -36,8 +36,8 @@
     <div class="chain-section">
       <div class="chain-column">
         <div class="chain-header">
-          <label>Available Routines</label>
-          <button id="create-routine-btn">Create Routine</button>
+          <label>Available Plans</label>
+          <button id="create-plan-btn">Create Plan</button>
         </div>
         <div id="available-list" class="chain-list"></div>
       </div>
@@ -109,19 +109,19 @@
   </div>
 </div>
 
-<div id="routine-editor-modal" class="modal hidden">
+<div id="plan-editor-modal" class="modal hidden">
   <div class="modal-content modal-wide">
     <div class="modal-header">
-      <span id="routine-editor-title">Create Routine</span>
+      <span id="plan-editor-title">Create Plan</span>
       <div class="modal-header-actions">
-        <button id="routine-save-btn" class="btn-start">Save</button>
-        <button id="routine-editor-close">&times;</button>
+        <button id="plan-save-btn" class="btn-start">Save</button>
+        <button id="plan-editor-close">&times;</button>
       </div>
     </div>
-    <div id="routine-editor-body" class="modal-body">
+    <div id="plan-editor-body" class="modal-body">
       <div class="field-row">
-        <label for="routine-name">Name</label>
-        <input type="text" id="routine-name" placeholder="my_routine">
+        <label for="plan-name">Name</label>
+        <input type="text" id="plan-name" placeholder="my_plan">
       </div>
 
       <div class="section-title">Config</div>
@@ -136,22 +136,10 @@
         <label for="cfg-tab-name">Tab Name</label>
         <input type="text" id="cfg-tab-name" placeholder="window title" list="window-options">
       </div>
-      <div class="field-grid" id="routine-config">
+      <div class="field-grid" id="plan-config">
         <div class="field-cell">
           <label for="cfg-delay">Delay</label>
           <input type="number" id="cfg-delay" step="0.1" value="0.5">
-        </div>
-        <div class="field-cell">
-          <label for="cfg-max-step-retry">Max Step Retry</label>
-          <input type="number" id="cfg-max-step-retry" value="15">
-        </div>
-        <div class="field-cell">
-          <label for="cfg-timeout">Timeout</label>
-          <input type="number" id="cfg-timeout" step="0.5" value="15">
-        </div>
-        <div class="field-cell">
-          <label for="cfg-resync-timeout">Resync Timeout</label>
-          <input type="number" id="cfg-resync-timeout" step="0.5" placeholder="never">
         </div>
       </div>
 
@@ -159,7 +147,7 @@
         Steps
       </div>
 
-      <div id="routine-steps"></div>
+      <div id="plan-steps"></div>
 
       <button id="add-step-btn" class="small-btn">Add Step</button>
 
@@ -168,11 +156,11 @@
       </div>
       <p class="section-hint">Checked every tick, regardless of the current step. Use for dialogs/popups (put network/retry first).</p>
 
-      <div id="routine-interrupt-steps"></div>
+      <div id="plan-interrupt-steps"></div>
 
       <button id="add-interrupt-step-btn" class="small-btn">Add Interrupt Step</button>
 
-      <div id="routine-editor-error" class="editor-error hidden"></div>
+      <div id="plan-editor-error" class="editor-error hidden"></div>
     </div>
   </div>
 </div>

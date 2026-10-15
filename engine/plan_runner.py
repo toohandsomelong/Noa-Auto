@@ -3,18 +3,21 @@ from __future__ import annotations
 import time
 from typing import Any
 
-from routines.base import WAIT, DONE, RECOVER, match_template
-from routines.config import RoutineConfig
-from routines.step import Step
+from engine.base import WAIT, DONE, match_template
+from engine.config import PlanConfig
+from engine.step import Step
 
 
-class Routine:
+ANCHOR_DEBOUNCE_FRAMES = 2
+
+
+class PlanRunner:
     def __init__(
         self,
         name: str,
         steps: list[Step],
         logger: Any,
-        config: RoutineConfig,
+        config: PlanConfig,
         interrupt_steps: list[Step] | None = None,
         *,
         plan_key: str | None = None,
@@ -25,33 +28,34 @@ class Routine:
         self.logger = logger
         self.config = config
         self.done = False
-        self.aborted = False
 
         for i, step in enumerate(steps):
             step.index = i
             step.logger = logger
             step.delay = config.delay
-            step.max_step_retry = config.max_step_retry
-            step.timeout = config.timeout
-            step.set_verify_next(self._steps_visible)
 
         self._interrupt_steps = interrupt_steps or []
         for i, step in enumerate(self._interrupt_steps):
             step.index = i
             step.logger = logger
             step.delay = config.delay
-            step.max_step_retry = config.max_step_retry
-            step.timeout = config.timeout
 
         self._index = 0
+        self._mark_terminal_targets()
         self._reset_on_enter(0)
 
         self._interrupt_was_active = False
-        self._resync_pending = False
-        self._resync_origin = 0
-        self._resync_deadline: float | None = None
-        self._resync_candidate: int | None = None
-        self._resync_hits = 0
+        self._anchor_candidate: int | None = None
+        self._anchor_hits = 0
+        self._match_cache: dict[tuple[str, float, bool], Any] | None = None
+
+    def _mark_terminal_targets(self) -> None:
+        n = len(self.steps)
+        for i, step in enumerate(self.steps):
+            for rule in getattr(step, "_rules", []):
+                next_idx = rule.goto if rule.goto is not None else i + 1
+                if next_idx >= n:
+                    rule.terminal = True
 
     def _reset_on_enter(self, idx: int) -> None:
         if 0 <= idx < len(self.steps):
@@ -59,7 +63,7 @@ class Routine:
             step.reset()
             if self.logger is not None:
                 self.logger.info(
-                    f'[routine "{self.name}"] entering step {idx} ({step.label or "step"}) '
+                    f'[plan "{self.name}"] entering step {idx} ({step.label or "step"}) '
                     f"targets: {self._targets_desc(step)}"
                 )
 
@@ -67,12 +71,22 @@ class Routine:
         names = [getattr(t, "label", None) or t.template for t in getattr(step, "_rules", [])]
         return ", ".join(names) or "none"
 
+    def _cached_match(self, screenshot: Any, path: str, threshold: float, grayscale: bool) -> Any:
+        key = (path, threshold, grayscale)
+        cache = self._match_cache
+        if cache is None:
+            cache = {}
+            self._match_cache = cache
+        if key not in cache:
+            cache[key] = match_template(screenshot, path, threshold=threshold, grayscale=grayscale)
+        return cache[key]
+
     def _step_visible(self, step: Step, screenshot: Any) -> bool:
         for target in getattr(step, "_rules", []):
             thresh = target.threshold if target.threshold is not None else step.threshold
             gs = target.grayscale if target.grayscale is not None else step.grayscale
             if all(
-                match_template(screenshot, path, threshold=thresh, grayscale=gs) is not None
+                self._cached_match(screenshot, path, threshold=thresh, grayscale=gs) is not None
                 for path in getattr(target, "templates", [getattr(target, "template", "")])
             ):
                 return True
@@ -86,32 +100,32 @@ class Routine:
     def _templates_for_target(self, target: Any) -> list[str]:
         return getattr(target, "templates", None) or [getattr(target, "template", "")]
 
-    def _current_step_templates(self) -> set[str]:
-        step = self.current_step()
-        if step is None:
-            return set()
+    def _templates_for_step(self, step: Step) -> set[str]:
         paths: set[str] = set()
         for t in getattr(step, "_rules", []):
             paths.update(self._templates_for_target(t))
         return paths
 
+    def _current_step_templates(self) -> set[str]:
+        step = self.current_step()
+        if step is None:
+            return set()
+        return self._templates_for_step(step)
+
     def _tick_interrupts(self, screenshot: Any) -> bool:
-        """Tick the first visible interrupt (blocker) and short-circuit the routine.
+        """Tick the first visible interrupt (blocker) and short-circuit the plan.
 
         Interrupts are checked every cycle, regardless of the current step, and never
-        advance the routine. Returns True while any blocker is on screen.
+        advance the plan. Returns True while any blocker is on screen.
         """
         current_templates = self._current_step_templates()
         for step in self._interrupt_steps:
-            step_templates: set[str] = set()
-            for t in getattr(step, "_rules", []):
-                step_templates.update(self._templates_for_target(t))
+            step_templates = self._templates_for_step(step)
             if step_templates & current_templates:
                 continue
             if self._step_visible(step, screenshot):
                 self._interrupt_was_active = True
-                if step.tick(screenshot) == RECOVER:
-                    step.reset_click_state()
+                step.tick(screenshot)
                 return True
 
         if self._interrupt_was_active:
@@ -127,17 +141,12 @@ class Routine:
             return self.steps[self._index]
         return None
 
-#TODO
-##why the fuck step advanced to next step before confirming the click? 
-##implement interactive test ground? this will need more research
-
     def tick(self, screenshot: Any) -> None:
+        self._match_cache = {}
+
         if self.done:
             return
         if self._tick_interrupts(screenshot):
-            return
-        if self._resync_pending:
-            self._resync_tick(screenshot)
             return
         if self._index < 0 or self._index >= len(self.steps):
             self.done = True
@@ -148,37 +157,40 @@ class Routine:
         log = self.logger
 
         if result == WAIT:
+            if cur.lost:
+                self._anchor_tick(screenshot)
             return
         if result == DONE:
             if log:
-                log.info(f'[routine "{self.name}"] step {self._index} returned DONE - routine finished')
+                log.info(f'[plan "{self.name}"] step {self._index} returned DONE - plan finished')
             self.done = True
-            return
-        if result == RECOVER:
-            if log:
-                log.info(f'[routine "{self.name}"] step {self._index} returned RECOVER')
-            self._enter_resync()
             return
 
         if log:
-            log.info(f'[routine "{self.name}"] step {self._index} returned result {result}, advancing')
+            log.info(f'[plan "{self.name}"] step {self._index} returned result {result}, advancing')
 
         if result != self._index:
             self._advance_to(result)
 
     def _advance_to(self, new_idx: int, *, force_reset: bool = False) -> None:
         if self.logger is not None:
-            self.logger.info(f'[routine "{self.name}"] advancing step {self._index} -> {new_idx}')
+            self.logger.info(f'[plan "{self.name}"] advancing step {self._index} -> {new_idx}')
         if new_idx != self._index or force_reset:
             self._reset_on_enter(new_idx)
         self._index = new_idx
 
-    def _resume_candidates(self) -> list[int]:
-        """Return resume candidates in priority order (origin is the last resort)."""
+    def _anchor_candidates(self) -> list[int]:
+        """Return candidate step indices to scan while the current step is lost.
+
+        Priority order mirrors the old resync heuristic: a clicked target's explicit
+        ``goto`` successor first, then ``goto_step_if_not_found``, then the natural
+        next step, then forward plan order, then earlier steps. The current step is
+        excluded because it already reported itself lost.
+        """
         n = len(self.steps)
         if n == 0:
             return []
-        origin = min(max(self._resync_origin, 0), n - 1)
+        origin = min(max(self._index, 0), n - 1)
         order: list[int] = []
         seen: set[int] = set()
 
@@ -200,67 +212,47 @@ class Routine:
             add(idx)
         for idx in range(0, origin):
             add(idx)
-        add(origin)
         return order
 
-    def _resync_tick(self, screenshot: Any) -> None:
+    def _anchor_tick(self, screenshot: Any) -> None:
+        current_templates = self._current_step_templates()
         best: int | None = None
-        for idx in self._resume_candidates():
+        for idx in self._anchor_candidates():
+            candidate_templates = self._templates_for_step(self.steps[idx])
+            if candidate_templates & current_templates:
+                continue
             if self._steps_visible(idx, screenshot):
                 best = idx
                 break
 
         if best is None:
-            self._resync_candidate = None
-            self._resync_hits = 0
-            if self._resync_deadline is not None and time.time() > self._resync_deadline:
-                if self.logger is not None:
-                    self.logger.state(
-                        f"Routine '{self.name}' resync timed out - no known step visible, aborting"
-                    )
-                self.aborted = True
-                self.done = True
-                self._resync_pending = False
-                return
+            self._anchor_candidate = None
+            self._anchor_hits = 0
             if self.logger is not None:
                 self.logger.info(
-                    f'[routine "{self.name}"] resync: no step visible yet, staying in resync'
+                    f'[plan "{self.name}"] anchor: no known step visible yet, staying lost'
                 )
             return
 
-        if best == self._resync_candidate:
-            self._resync_hits += 1
+        if best == self._anchor_candidate:
+            self._anchor_hits += 1
         else:
-            self._resync_candidate = best
-            self._resync_hits = 1
+            self._anchor_candidate = best
+            self._anchor_hits = 1
 
-        if self._resync_hits < 2:
+        if self._anchor_hits < ANCHOR_DEBOUNCE_FRAMES:
             if self.logger is not None:
                 self.logger.info(
-                    f'[routine "{self.name}"] resync: candidate step {best} seen '
-                    f"{self._resync_hits}/2, confirming"
+                    f'[plan "{self.name}"] anchor: candidate step {best} seen '
+                    f"{self._anchor_hits}/{ANCHOR_DEBOUNCE_FRAMES}, confirming"
                 )
             return
 
-        origin = self._resync_origin
-        self._resync_pending = False
-        self._resync_candidate = None
-        self._resync_hits = 0
+        origin = self._index
+        self._anchor_candidate = None
+        self._anchor_hits = 0
         if self.logger is not None:
             self.logger.state(
-                f"Routine '{self.name}' resynced to step {best} (was stuck at step {origin})"
+                f"Plan '{self.name}' re-anchored to step {best} (was at step {origin})"
             )
         self._advance_to(best, force_reset=True)
-
-    def _enter_resync(self) -> None:
-        origin = self._index
-        self._resync_pending = True
-        self._resync_origin = origin
-        self._resync_candidate = None
-        self._resync_hits = 0
-        timeout = self.config.resync_timeout
-        self._resync_deadline = time.time() + timeout if timeout is not None else None
-        if self.logger is not None:
-            self.logger.state(
-                f"Routine '{self.name}' lost its place at step {origin} - scanning screen to resume"
-            )

@@ -7,10 +7,10 @@ import pytest
 from core import screen_bot as sb
 from core.match_result import MatchResult
 from core.state_manager import BotState, StateManager
-from routines.click_step import ClickStep
-from routines.config import RoutineConfig
-from routines.routine import Routine
-from routines.target import Target
+from engine.click_step import ClickStep
+from engine.config import PlanConfig
+from engine.plan_runner import PlanRunner
+from engine.target import Target
 
 
 @pytest.fixture(autouse=True)
@@ -91,13 +91,13 @@ def test_run_cycle_offsets_click(
     bot = sb.ScreenBot(fake_logger, state_mgr, fw)
 
     step = ClickStep([Target("templates/x.png")])
-    routine = Routine(
+    plan = PlanRunner(
         "cap",
         [step],
         logger=fake_logger,
-        config=RoutineConfig(),
+        config=PlanConfig(),
     )
-    bot.start_routine(routine)
+    bot.start_plan(plan)
     state_mgr.state = BotState.RUNNING
 
     fake_screen.visible.add("x.png")
@@ -131,13 +131,13 @@ def test_run_cycle_scales_screenshot_and_click(
     monkeypatch.setattr(sb, "_capture", fake_capture)
 
     step = ClickStep([Target("templates/x.png")])
-    routine = Routine(
+    plan = PlanRunner(
         "scaled",
         [step],
         logger=fake_logger,
-        config=RoutineConfig(capture_width=800, capture_height=450),
+        config=PlanConfig(capture_width=800, capture_height=450),
     )
-    bot.start_routine(routine)
+    bot.start_plan(plan)
     state_mgr.state = BotState.RUNNING
 
     fake_screen.visible.add("x.png")

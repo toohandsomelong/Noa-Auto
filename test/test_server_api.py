@@ -38,6 +38,13 @@ def test_config_get_and_put(client):
     config = client.get("/api/config").json()
     assert config["repeat"] == 5
     assert config["check_interval"] == 1.0
+    assert "plans" in config
+
+
+def test_config_put_plans_chain(client):
+    response = client.put("/api/config", json={"plans": ["a", "b"]})
+    assert response.status_code == 200
+    assert client.get("/api/config").json()["plans"] == ["a", "b"]
 
 
 def test_preview_get_and_enable(client):
@@ -64,10 +71,10 @@ def test_list_windows(client):
     assert client.get("/api/windows").json() == {"windows": []}
 
 
-def test_list_routines(client):
-    response = client.get("/api/routines")
+def test_list_plans(client):
+    response = client.get("/api/plans")
     assert response.status_code == 200
-    assert "routines" in response.json()
+    assert "plans" in response.json()
 
 
 def test_plan_crud_roundtrip(client):

@@ -4,12 +4,12 @@ import json
 import os
 from typing import Any
 
-from routines.click_action import ClickAction
-from routines.click_step import ClickStep
-from routines.config import RoutineConfig
-from routines.target import Target
-from routines.routine import Routine
-from routines.step import Step
+from engine.click_action import ClickAction
+from engine.click_step import ClickStep
+from engine.config import PlanConfig
+from engine.target import Target
+from engine.plan_runner import PlanRunner
+from engine.step import Step
 
 
 PLANS_DIR = "plans"
@@ -150,8 +150,8 @@ def delete_plan(name: str) -> bool:
         return False
 
 
-def build_routine_from_plan(name: str, logger: Any) -> Routine | None:
-    """Load ``plans/<name>.json`` and build a :class:`Routine`."""
+def build_plan_runner(name: str, logger: Any) -> PlanRunner | None:
+    """Load ``plans/<name>.json`` and build a :class:`PlanRunner`."""
     try:
         data = get_plan(name)
     except Exception as e:
@@ -168,7 +168,7 @@ def build_routine_from_plan(name: str, logger: Any) -> Routine | None:
     steps = _build_steps(data.get("steps", []), logger)
     interrupt_steps = _build_steps(data.get("interrupt_steps", []), logger)
 
-    return Routine(
+    return PlanRunner(
         data.get("name") or name,
         steps,
         logger,
@@ -178,13 +178,10 @@ def build_routine_from_plan(name: str, logger: Any) -> Routine | None:
     )
 
 
-def _build_config(raw: dict[str, Any]) -> RoutineConfig:
-    """Construct a :class:`RoutineConfig` from a JSON config object."""
+def _build_config(raw: dict[str, Any]) -> PlanConfig:
+    """Construct a :class:`PlanConfig` from a JSON config object."""
     allowed = (
         "delay",
-        "max_step_retry",
-        "timeout",
-        "resync_timeout",
         "game_path",
         "tab_name",
         "capture_width",
@@ -194,7 +191,7 @@ def _build_config(raw: dict[str, Any]) -> RoutineConfig:
     for key in ("game_path", "tab_name"):
         if key in kwargs and isinstance(kwargs[key], str):
             kwargs[key] = kwargs[key].strip() or None
-    return RoutineConfig(**kwargs)
+    return PlanConfig(**kwargs)
 
 
 def _build_steps(raw_steps: list[dict[str, Any]], logger: Any) -> list[Step]:
