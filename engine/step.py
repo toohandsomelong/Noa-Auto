@@ -19,6 +19,8 @@ class Step:
 
     click_count: int = 0
     lost: bool = False
+    confirming: bool = False
+    _clicked_target: Any | None = None
     last_match: MatchResult | None = None
     last_match_label: str | None = None
 
@@ -38,6 +40,8 @@ class Step:
         self.last_match = None
         self.last_match_label = None
         self.lost = False
+        self.confirming = False
+        self._clicked_target = None
 
     def reset_click_state(self) -> None:
         self.click_count = 0

@@ -63,12 +63,35 @@ def fake_click(*args: object, **kwargs: object) -> bool:
     return True
 
 
+class FakeClock:
+    def __init__(self) -> None:
+        self.now = 0.0
+
+    def time(self) -> float:
+        return self.now
+
+    def monotonic(self) -> float:
+        return self.now
+
+    def sleep(self, seconds: float) -> None:
+        self.now += max(0.0, seconds)
+
+
+CLOCK = FakeClock()
+
+
 def _apply_patches(set_attr: Callable[..., None]) -> None:
     set_attr(cs_mod, "match_template", fake_match)
     set_attr(cs_mod, "do_click", fake_click)
     set_attr(base_mod, "match_template", fake_match)
     set_attr(base_mod, "do_click", fake_click)
     set_attr(plan_runner_mod, "match_template", fake_match)
+    set_attr(plan_runner_mod, "time", CLOCK)
+
+
+def expire_search_delay() -> None:
+    """Advance the fake clock past SEARCH_DELAY so the general scan is allowed."""
+    CLOCK.now += plan_runner_mod.SEARCH_DELAY + 0.1
 
 
 @pytest.fixture(autouse=True)
@@ -199,7 +222,9 @@ def scenario_f_anchor_to_visible_step() -> None:
     clicks.clear()
     _drive_to_step(plan, 2)
     reset_visible("C.png")  # game actually shows step 1's screen
-    tick(plan, 2)  # anchor sees C, debounces, then jumps
+    tick(plan, 1)  # lost -> search delay starts
+    expire_search_delay()
+    tick(plan, 2)  # general scan -> anchor
     assert plan._index == 1, f"expected anchor to step 1, got {plan._index}"
     assert not plan.done, "expected plan to keep running after anchor"
     print("    PASS: proactive anchor resumed at step 1")
@@ -249,13 +274,36 @@ def scenario_j_interrupt_overlap_guard() -> None:
 
 def scenario_k_forward_successor_preferred() -> None:
     print("K: anchor prefers the forward successor over the origin")
-    plan = make_runner()
+    steps = [
+        ClickStep([Target("templates/x/B.png")]),  # 0
+        ClickStep([Target("templates/x/C.png")]),  # 1
+        ClickStep([Target("templates/x/D.png")]),  # 2 (forward, non-terminal)
+        ClickStep([Target("templates/x/E.png")]),  # 3
+    ]
+    plan = PlanRunner("smoke", steps, logger=LOG, config=PlanConfig(delay=0.0))
     clicks.clear()
-    _drive_to_step(plan, 1)
+    reset_visible("B.png")
+    tick(plan, 1)  # click B
+    reset_visible("C.png")
+    tick(plan, 2)  # anchor -> step 1
+    assert plan._index == 1, f"expected step 1, got {plan._index}"
     reset_visible("D.png")  # origin+1 is visible
-    tick(plan, 2)  # debounce -> commit
+    tick(plan, 2)
     assert plan._index == 2, f"expected forward successor step 2, got {plan._index}"
     print("    PASS: forward successor chosen over origin")
+
+
+def scenario_r_terminal_step_not_an_anchor() -> None:
+    print("R: a visible terminal step (Home button) never anchors a lost step")
+    plan = make_runner()
+    clicks.clear()
+    reset_visible("B.png")
+    tick(plan, 1)  # click B
+    reset_visible("D.png")  # only the terminal last step is visible
+    tick(plan, 10)
+    assert plan._index == 0, f"expected to stay at step 0, got {plan._index}"
+    assert not plan.done, "terminal step must not finish the plan while lost"
+    print("    PASS: terminal step ignored while seeking")
 
 
 def scenario_l_origin_is_last_resort() -> None:
@@ -263,10 +311,12 @@ def scenario_l_origin_is_last_resort() -> None:
     plan = make_runner()
     clicks.clear()
     _drive_to_step(plan, 2)
-    reset_visible("C.png")  # only origin (step 1) visible
-    tick(plan, 2)  # debounce -> commit on origin
+    reset_visible("C.png")  # only an earlier step is visible
+    tick(plan, 1)  # lost -> search delay starts
+    expire_search_delay()
+    tick(plan, 2)  # general scan -> commit
     assert plan._index == 1, f"expected origin step 1, got {plan._index}"
-    print("    PASS: origin used only when nothing else matches")
+    print("    PASS: earlier step used only when nothing else matches")
 
 
 def scenario_m_non_origin_preferred() -> None:
@@ -274,10 +324,12 @@ def scenario_m_non_origin_preferred() -> None:
     plan = make_runner()
     clicks.clear()
     _drive_to_step(plan, 2)
-    reset_visible("B.png")  # earlier step 0 visible, origin (step 1) not visible
-    tick(plan, 2)  # debounce -> commit
+    reset_visible("B.png")  # earlier step 0 visible
+    tick(plan, 1)  # lost -> search delay starts
+    expire_search_delay()
+    tick(plan, 2)  # general scan -> commit
     assert plan._index == 0, f"expected step 0 over origin, got {plan._index}"
-    print("    PASS: earlier non-origin candidate preferred")
+    print("    PASS: earlier candidate preferred")
 
 
 def scenario_n_and_target_requires_all_templates() -> None:
@@ -370,6 +422,8 @@ def main() -> None:
     scenario_j_interrupt_overlap_guard()
     print()
     scenario_k_forward_successor_preferred()
+    print()
+    scenario_r_terminal_step_not_an_anchor()
     print()
     scenario_l_origin_is_last_resort()
     print()

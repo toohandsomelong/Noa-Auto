@@ -3,12 +3,71 @@ from __future__ import annotations
 import time
 from typing import Any
 
+import cv2
+import numpy as np
+
 from engine.base import WAIT, DONE, match_template
 from engine.config import PlanConfig
 from engine.step import Step
 
 
-ANCHOR_DEBOUNCE_FRAMES = 2
+# --- screen-stability gate -------------------------------------------------
+# Used only by the general hunt (after SEARCH_DELAY): the runner scans every
+# step only once the screen has stopped changing, so loading fades, scroll-ins
+# and one-frame flicker can't produce a wrong anchor. The expected next step is
+# NOT gated by this — it is a known destination and is matched directly. Each
+# tick the screenshot is reduced to a tiny grayscale signature and compared to
+# the previous one.
+STABLE_FRAME_SIZE = (80, 45)  # downscaled signature size (w, h)
+STABLE_THRESHOLD = 0.02  # tolerated mean abs difference (0..1); tolerant on purpose
+STABLE_FRAMES = 2  # consecutive settled comparisons required to be "stable"
+
+
+# --- search delay ----------------------------------------------------------
+# When the current step is lost the runner first gives the game time to show
+# the expected next step. Only once the step has been lost for this long does
+# it run the general nearest-step scan. Keeps normal transitions instant (the
+# expected next step still advances immediately) while avoiding a premature
+# hunt when the next screen is simply still loading.
+SEARCH_DELAY = 2.0  # seconds to wait for the expected next step before scanning
+
+
+# --- anchor selection weights ----------------------------------------------
+# When several steps match on a stable screen the runner scores each candidate
+# and picks the cheapest. Weights are internal constants (no plan keys); tune
+# them here. Lower score wins.
+W_DIST = 1.0  # cost of one step of distance from the current step
+FORWARD_BONUS = -0.5  # subtracted for candidates ahead of the current step (progress)
+BACKWARD_PENALTY = 1.0  # added for candidates behind the current step (avoids spurious rewinds)
+W_CONF = 0.0  # (suggested: 1.0) weight of the strongest match confidence
+W_EV = 0.0  # (suggested: 0.25) weight of the number of matching targets
+
+
+def anchor_score(
+    origin: int,
+    index: int,
+    *,
+    confidence: float = 0.0,
+    matched_targets: int = 0,
+) -> float:
+    """Cost of anchoring to ``index`` while the current step is ``origin``.
+
+    Lower is better. Combines distance, a forward preference / backward penalty,
+    and (currently disabled, see ``W_CONF`` / ``W_EV``) match strength.
+    """
+    distance = abs(index - origin)
+    if index > origin:
+        direction = FORWARD_BONUS
+    elif index < origin:
+        direction = BACKWARD_PENALTY
+    else:
+        direction = 0.0
+    return (
+        W_DIST * distance
+        + direction
+        - W_CONF * confidence
+        - W_EV * matched_targets
+    )
 
 
 class PlanRunner:
@@ -45,9 +104,11 @@ class PlanRunner:
         self._reset_on_enter(0)
 
         self._interrupt_was_active = False
-        self._anchor_candidate: int | None = None
-        self._anchor_hits = 0
         self._match_cache: dict[tuple[str, float, bool], Any] | None = None
+        self._prev_frame: Any | None = None
+        self._stable_frames = 0
+        self._pending_pick: int | None = None
+        self._lost_since: float | None = None
 
     def _mark_terminal_targets(self) -> None:
         n = len(self.steps)
@@ -81,6 +142,40 @@ class PlanRunner:
             cache[key] = match_template(screenshot, path, threshold=threshold, grayscale=grayscale)
         return cache[key]
 
+    def _frame_signature(self, screenshot: Any) -> Any:
+        gray = screenshot
+        if len(gray.shape) == 3:
+            gray = cv2.cvtColor(gray, cv2.COLOR_BGR2GRAY)
+        return cv2.resize(gray, STABLE_FRAME_SIZE, interpolation=cv2.INTER_AREA)
+
+    def _update_stability(self, screenshot: Any) -> None:
+        """Update the settled-screen counter from the latest frame.
+
+        Non-array screenshots (tests pass opaque placeholders) are treated as
+        already settled so the gate stays out of the way.
+        """
+        if not isinstance(screenshot, np.ndarray):
+            self._prev_frame = None
+            self._stable_frames = STABLE_FRAMES
+            return
+
+        signature = self._frame_signature(screenshot)
+        prev = self._prev_frame
+        if prev is None or prev.shape != signature.shape:
+            self._stable_frames = 0
+        else:
+            diff = float(
+                np.mean(np.abs(signature.astype(np.int16) - prev.astype(np.int16)))
+            ) / 255.0
+            if diff <= STABLE_THRESHOLD:
+                self._stable_frames += 1
+            else:
+                self._stable_frames = 0
+        self._prev_frame = signature
+
+    def _screen_stable(self) -> bool:
+        return self._stable_frames >= STABLE_FRAMES
+
     def _step_visible(self, step: Step, screenshot: Any) -> bool:
         for target in getattr(step, "_rules", []):
             thresh = target.threshold if target.threshold is not None else step.threshold
@@ -91,11 +186,6 @@ class PlanRunner:
             ):
                 return True
         return False
-
-    def _steps_visible(self, idx: int, screenshot: Any) -> bool:
-        if not (0 <= idx < len(self.steps)):
-            return True
-        return self._step_visible(self.steps[idx], screenshot)
 
     def _templates_for_target(self, target: Any) -> list[str]:
         return getattr(target, "templates", None) or [getattr(target, "template", "")]
@@ -143,6 +233,7 @@ class PlanRunner:
 
     def tick(self, screenshot: Any) -> None:
         self._match_cache = {}
+        self._update_stability(screenshot)
 
         if self.done:
             return
@@ -158,9 +249,22 @@ class PlanRunner:
 
         if result == WAIT:
             if cur.lost:
+                if self._lost_since is None:
+                    self._lost_since = time.monotonic()
                 self._anchor_tick(screenshot)
+            else:
+                self._lost_since = None
             return
         if result == DONE:
+            # A missing target on a still-changing screen is not proof the click
+            # landed (flicker/animation). Only finish once the screen is settled.
+            if not self._screen_stable():
+                if log:
+                    log.info(
+                        f'[plan "{self.name}"] step {self._index} reported DONE but '
+                        f"screen not settled - deferring plan completion"
+                    )
+                return
             if log:
                 log.info(f'[plan "{self.name}"] step {self._index} returned DONE - plan finished')
             self.done = True
@@ -178,81 +282,157 @@ class PlanRunner:
         if new_idx != self._index or force_reset:
             self._reset_on_enter(new_idx)
         self._index = new_idx
+        # Entering a step means the screen is expected to change (normal advance,
+        # explicit goto, or goto_step_if_not_found). Drop the stability history so
+        # the previous screen's "settled" state never leaks into the new screen.
+        self._prev_frame = None
+        self._stable_frames = 0
+        self._pending_pick = None
+        self._lost_since = None
 
-    def _anchor_candidates(self) -> list[int]:
-        """Return candidate step indices to scan while the current step is lost.
+    def _expected_candidates(
+        self, origin: int, *, clicked_target: Any | None = None
+    ) -> set[int]:
+        """Explicit destination the runner intends to reach from ``origin``.
 
-        Priority order mirrors the old resync heuristic: a clicked target's explicit
-        ``goto`` successor first, then ``goto_step_if_not_found``, then the natural
-        next step, then forward plan order, then earlier steps. The current step is
-        excluded because it already reported itself lost.
+        While confirming this is the clicked target's ``goto`` when it has one,
+        otherwise the natural next step (``origin + 1``). It is a top-preference
+        tier so an intended jump (e.g. ``goto: 14``) beats a nearer incidental
+        match; it carries no uniqueness requirement.
         """
         n = len(self.steps)
-        if n == 0:
-            return []
-        origin = min(max(self._index, 0), n - 1)
-        order: list[int] = []
-        seen: set[int] = set()
+        target: int | None = None
+        if clicked_target is not None:
+            target = getattr(clicked_target, "goto", None)
+        if target is None:
+            target = origin + 1
+        return {target} if 0 <= target < n else set()
 
-        def add(idx: int) -> None:
-            if 0 <= idx < n and idx not in seen:
-                seen.add(idx)
-                order.append(idx)
+    def _is_terminal_step(self, idx: int) -> bool:
+        """True when every target of the step finishes the plan.
 
-        step = self.steps[origin]
-        for rule in getattr(step, "_rules", []):
-            goto = getattr(rule, "goto", None)
-            if goto is not None:
-                add(goto)
-        fallback = getattr(step, "_goto_step_if_not_found", None)
-        if fallback is not None:
-            add(fallback)
-        add(origin + 1)
-        for idx in range(origin + 1, n):
-            add(idx)
-        for idx in range(0, origin):
-            add(idx)
-        return order
+        Terminal steps are reached by their own advance/``goto``; excluding them
+        from seeking stops a global button (e.g. a Home icon that happens to live
+        only on the last step) from ending the plan whenever the runner is lost.
+        """
+        rules = getattr(self.steps[idx], "_rules", [])
+        return bool(rules) and all(getattr(r, "terminal", False) for r in rules)
+
+    def _step_match_strength(self, step: Step, screenshot: Any) -> tuple[float, int]:
+        """Return ``(best_confidence, matched_target_count)`` for a step.
+
+        A target counts as matched only when all of its templates are visible
+        (AND-match). Confidence is the weakest template of the strongest target.
+        """
+        best_conf = 0.0
+        count = 0
+        for target in getattr(step, "_rules", []):
+            thresh = target.threshold if target.threshold is not None else step.threshold
+            gs = target.grayscale if target.grayscale is not None else step.grayscale
+            confs: list[float] = []
+            for path in self._templates_for_target(target):
+                mi = self._cached_match(screenshot, path, threshold=thresh, grayscale=gs)
+                if mi is None:
+                    confs = []
+                    break
+                confs.append(float(mi.confidence))
+            if confs:
+                count += 1
+                best_conf = max(best_conf, min(confs))
+        return best_conf, count
+
+    def _matching_steps(self, screenshot: Any) -> dict[int, tuple[float, int]]:
+        matches: dict[int, tuple[float, int]] = {}
+        for i, step in enumerate(self.steps):
+            strength = self._step_match_strength(step, screenshot)
+            if strength[1] > 0:
+                matches[i] = strength
+        return matches
+
+    def _best_by_score(self, origin: int, matches: dict[int, tuple[float, int]]) -> int | None:
+        best_idx: int | None = None
+        best_score: float | None = None
+        for idx in sorted(matches):
+            conf, count = matches[idx]
+            score = anchor_score(origin, idx, confidence=conf, matched_targets=count)
+            better = (
+                best_score is None
+                or score < best_score
+                or (score == best_score and (best_idx is None or idx > best_idx))
+            )
+            if better:
+                best_score = score
+                best_idx = idx
+        return best_idx
+
+    def _select_anchor(self, screenshot: Any, *, searching: bool) -> int | None:
+        """Pick the step to re-anchor to, or ``None``.
+
+        Always prefers the explicit expected destination (clicked target's
+        ``goto`` or ``origin + 1``) when it is visible. The general nearest-step
+        scan only runs once ``searching`` is True, i.e. after :data:`SEARCH_DELAY`
+        has elapsed without the expected next step showing up.
+        """
+        origin = self._index
+        cur = self.current_step()
+        clicked_target = getattr(cur, "_clicked_target", None) if cur is not None else None
+        expected = self._expected_candidates(origin, clicked_target=clicked_target)
+        for idx in sorted(expected):
+            if self._step_match_strength(self.steps[idx], screenshot)[1] > 0:
+                return idx
+
+        if not searching:
+            return None
+
+        matches = self._matching_steps(screenshot)
+        matches.pop(origin, None)
+        candidates = {i: v for i, v in matches.items() if not self._is_terminal_step(i)}
+        if not candidates:
+            return None
+        return self._best_by_score(origin, candidates)
 
     def _anchor_tick(self, screenshot: Any) -> None:
-        current_templates = self._current_step_templates()
-        best: int | None = None
-        for idx in self._anchor_candidates():
-            candidate_templates = self._templates_for_step(self.steps[idx])
-            if candidate_templates & current_templates:
-                continue
-            if self._steps_visible(idx, screenshot):
-                best = idx
-                break
+        lost_since = self._lost_since
+        lost_for = 0.0 if lost_since is None else time.monotonic() - lost_since
+        searching = lost_for >= SEARCH_DELAY
 
-        if best is None:
-            self._anchor_candidate = None
-            self._anchor_hits = 0
-            if self.logger is not None:
-                self.logger.info(
-                    f'[plan "{self.name}"] anchor: no known step visible yet, staying lost'
-                )
+        # Only the general hunt waits for the screen to settle. The expected next
+        # step is a known destination, matched directly on the current frame, so
+        # normal transitions don't pay the settle cost.
+        if searching and not self._screen_stable():
             return
 
-        if best == self._anchor_candidate:
-            self._anchor_hits += 1
-        else:
-            self._anchor_candidate = best
-            self._anchor_hits = 1
+        pick = self._select_anchor(screenshot, searching=searching)
+        if pick is None:
+            self._pending_pick = None
+            if self.logger is not None:
+                if searching:
+                    self.logger.info(
+                        f'[plan "{self.name}"] anchor: no matching step on the settled '
+                        f"screen, staying lost"
+                    )
+                else:
+                    remaining = max(SEARCH_DELAY - lost_for, 0.0)
+                    self.logger.info(
+                        f'[plan "{self.name}"] anchor: waiting for the next step '
+                        f"({remaining:.1f}s before scanning)"
+                    )
+            return
 
-        if self._anchor_hits < ANCHOR_DEBOUNCE_FRAMES:
+        # Two-frame debounce: the same pick must be chosen again on the next tick
+        # before committing. Unsettled frames don't discard it (see above).
+        if self._pending_pick != pick:
+            self._pending_pick = pick
             if self.logger is not None:
                 self.logger.info(
-                    f'[plan "{self.name}"] anchor: candidate step {best} seen '
-                    f"{self._anchor_hits}/{ANCHOR_DEBOUNCE_FRAMES}, confirming"
+                    f'[plan "{self.name}"] anchor: candidate step {pick} matched, verifying'
                 )
             return
 
         origin = self._index
-        self._anchor_candidate = None
-        self._anchor_hits = 0
+        self._pending_pick = None
         if self.logger is not None:
             self.logger.state(
-                f"Plan '{self.name}' re-anchored to step {best} (was at step {origin})"
+                f"Plan '{self.name}' re-anchored to step {pick} (was at step {origin})"
             )
-        self._advance_to(best, force_reset=True)
+        self._advance_to(pick, force_reset=True)

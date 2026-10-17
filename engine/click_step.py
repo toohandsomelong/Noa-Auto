@@ -45,6 +45,7 @@ class ClickStep(Step):
 
     def tick(self, screenshot: Any) -> int:
         self.lost = False
+        self.confirming = False
         log = self.logger
         if time.time() < self._ready_until:
             if log:
@@ -149,7 +150,9 @@ class ClickStep(Step):
                         f'{self.log_prefix()} target "{target.label}": clicked target gone - '
                         f"waiting for anchor to locate next step"
                     )
+                self._clicked_target = target
                 self.lost = True
+                self.confirming = True
                 return WAIT
 
             return None

@@ -40,7 +40,7 @@ a browser dashboard, with **no coding required**.
   edit them in the built-in editor, or by hand.
 - 🔀 **Control flow** — jump between steps (`goto`), loop steps, fallback targets,
   and global **interrupt steps** that dismiss popups on any screen plus
-  automatic screen re-anchoring (**resync**) when something unexpected happens.
+  automatic self-anchoring to the next known screen when the current one is lost.
 - ⛓️ **Chaining & repeat** — queue multiple plans in a chain and repeat the
   whole chain N times.
 - 🚀 **Auto game launch / window attach** — set a game path and window title;
@@ -53,7 +53,8 @@ a browser dashboard, with **no coding required**.
 2. **Match** — each step looks for its template images on screen.
 3. **Act** — on a match, it clicks (left/right, with offsets) and advances to
    the next step or jumps via `goto`. Interrupt steps (popups) are checked first
-   every cycle; a stuck step triggers resync to a visible screen.
+   every cycle; if the current step disappears, the runner waits for the screen
+   to settle and re-anchors to the nearest matching step.
 
 A **plan** = ordered list of **steps**; a **step** = list of **targets**
 (template image + what to do when found). Templates are just PNG crops of
@@ -143,11 +144,10 @@ happening in real time. Hit **Stop** anytime.
 | Key | Type | Default | Description |
 |---|---|---|---|
 | `delay` | float | `0.0` | Pause after each step's action |
-| `timeout` | float | `15.0` | Seconds stuck on one step before resync (`null` = disabled) |
-| `max_step_retry` | int | `15` | Retries before resync (`null` = disabled) |
-| `resync_timeout` | float | `null` | Seconds to scan for a resume screen before aborting (`null` = poll forever) |
+| `check_interval` | float | `0.5` | Minimum seconds between screen captures (0.05–10.0) |
 | `game_path` | string | `null` | Exe to launch when no window is found |
 | `tab_name` | string | `null` | Window title to attach to (`null` = headless) |
+| `capture_width` / `capture_height` | int | — | Optional fixed capture size (preserves aspect) |
 
 **Steps** (`type: "click"` is the only type)
 
@@ -181,11 +181,18 @@ click step, but it is checked on **every tick regardless of the current step**
 the plan, and list order is priority — put network/retry first. A popup that
 only ever appears on one screen is better modeled as a target inside that step.
 
-When a step hits `timeout` / `max_step_retry`, the plan enters **resync**: it
-scans for the next step whose targets are visible (forward successors first, the
-stuck step only as a last resort) and resumes there after seeing it on two
-consecutive frames. With `resync_timeout = null` it polls forever; set a value
-to abort instead.
+When a clicked target disappears the runner looks for the expected next step
+(the *clicked* target's `goto`, else the natural next) and advances as soon as it
+matches — normal transitions are fast and don't wait for anything to settle. If
+the expected step doesn't show up within 2 seconds, the runner waits for the
+screen to stop changing and then hunts: it scans every step and picks the
+**nearest** matching one (forward wins ties, backward costs extra). The last step
+is never chosen this way — it is only reached through its own `goto`/advance — so
+a persistent Home button can't end the plan while the bot is lost. The chosen
+step must still be visible on the next frame before the runner commits and clicks.
+Terminal completion waits for a settled screen, so a flicker can't finish the plan
+early. There is no timeout and no abort; an unknown screen keeps scanning until a
+known one appears or an interrupt handles it.
 
 ## Tuning & troubleshooting
 
@@ -197,7 +204,9 @@ to abort instead.
 | Flow gets stuck on random popups | Add the popup's button as a target, or as an interrupt step for popups that appear anywhere |
 | Too fast / misses animations | Increase `delay` / `ready_delay` |
 | Dashboard doesn't open | App already running (single-instance), or ports 6969/6967/6767 are busy |
-| Plan stuck without resyncing | `timeout` / `max_step_retry` disabled (`null`)? Re-enable them |
+| Plan stuck on a black/loading screen | The runner waits for the screen to settle, then re-anchors to the nearest matching step |
+| Bot lands on the wrong step after a transition | Make each step's template unique to its screen; a button shared by several steps makes steps hard to tell apart |
+| Bot ends the plan early (e.g. presses Home) | The last step is never re-anchored to automatically; check that an earlier step's `goto` isn't firing |
 
 ## Project structure
 
