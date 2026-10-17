@@ -13,7 +13,7 @@ a browser dashboard, with **no coding required**.
 > Built as a game auto-clicker it
 > works with anything that renders buttons on screen.
 
-[ screenshot of the web dashboard here ]
+![Noa Auto dashboard](docs/images/dashboard.png)
 
 ---
 
@@ -121,7 +121,7 @@ Minimal example — wait for a start button, click it, then wait for the menu:
 }
 ```
 
-[ screenshot of the plan editor here ]
+![Plan editor](docs/images/plan-editor.png)
 
 ### 5. Configure the run
 
