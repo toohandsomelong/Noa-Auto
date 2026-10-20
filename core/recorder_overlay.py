@@ -213,6 +213,8 @@ class RecorderOverlay:
         on_capture: Callable[[], None] | None = None,
         on_confirm: Callable[[list[np.ndarray], str, int | None, tuple[int, int] | None, tuple[int, int]], None] | None = None,
         on_next_step: Callable[[], None] | None = None,
+        on_prev_step: Callable[[], None] | None = None,
+        on_remove_target: Callable[[int], None] | None = None,
         on_stop: Callable[[], None] | None = None,
         logger: Logger | None = None,
     ) -> None:
@@ -221,6 +223,8 @@ class RecorderOverlay:
         self._on_capture = on_capture
         self._on_confirm = on_confirm
         self._on_next_step = on_next_step
+        self._on_prev_step = on_prev_step
+        self._on_remove_target = on_remove_target
         self._on_stop = on_stop
         self._logger = logger
         self._thread: threading.Thread | None = None
@@ -263,6 +267,9 @@ class RecorderOverlay:
     def set_counts(self, step: int, targets: int) -> None:
         self._put({"cmd": "set_counts", "step": step, "targets": targets})
 
+    def set_targets(self, step: int, targets: list[dict[str, Any]]) -> None:
+        self._put({"cmd": "set_targets", "step": step, "targets": targets})
+
     def _put(self, item: dict[str, Any]) -> None:
         self._command_queue.put(item)
 
@@ -274,6 +281,8 @@ class RecorderOverlay:
                 on_capture=self._on_capture,
                 on_confirm=self._on_confirm,
                 on_next_step=self._on_next_step,
+                on_prev_step=self._on_prev_step,
+                on_remove_target=self._on_remove_target,
                 on_stop=self._on_stop,
                 logger=self._logger,
             )
@@ -291,6 +300,8 @@ class RecorderOverlayTk:
         on_capture: Callable[[], None] | None = None,
         on_confirm: Callable[[list[np.ndarray], str, int | None, tuple[int, int] | None, tuple[int, int]], None] | None = None,
         on_next_step: Callable[[], None] | None = None,
+        on_prev_step: Callable[[], None] | None = None,
+        on_remove_target: Callable[[int], None] | None = None,
         on_stop: Callable[[], None] | None = None,
         logger: Logger | None = None,
     ) -> None:
@@ -299,6 +310,8 @@ class RecorderOverlayTk:
         self._on_capture = on_capture
         self._on_confirm = on_confirm
         self._on_next_step = on_next_step
+        self._on_prev_step = on_prev_step
+        self._on_remove_target = on_remove_target
         self._on_stop = on_stop
         self._logger = logger
 
@@ -330,6 +343,14 @@ class RecorderOverlayTk:
         self._action_var = tk.StringVar(value=ACTION_LEFT)
         self._scroll_var = tk.StringVar(value="down")
         self._after_id: str | None = None
+
+        self._targets_win: tk.Toplevel | None = None
+        self._targets_btn: tk.Button | None = None
+        self._targets_pane: tk.Frame | None = None
+        self._targets_visible = False
+        self._targets_step = 1
+        self._targets_data: list[dict[str, Any]] = []
+        self._target_row_items: list[Any] = []
 
     def run(self) -> None:
         self._schedule_poll()
@@ -365,6 +386,8 @@ class RecorderOverlayTk:
             self._hide_bar()
         elif cmd == "set_counts":
             self._set_counts(item.get("step", 1), item.get("targets", 0))
+        elif cmd == "set_targets":
+            self._set_targets(item.get("step", 1), item.get("targets") or [])
         elif cmd == "request_crop":
             self._request_crop()
         elif cmd == "show_crop":
@@ -378,12 +401,15 @@ class RecorderOverlayTk:
             self._after_id = None
         self._hide_crop()
         self._hide_bar()
+        self._destroy_targets_control()
         self._root.quit()
 
     def _show_bar(self, step: int, targets: int) -> None:
         if self._bar is not None:
             self._set_counts(step, targets)
             self._bar.deiconify()
+            if self._targets_win is not None:
+                self._targets_win.deiconify()
             return
         self._bar = tk.Toplevel(self._root)
         self._bar.overrideredirect(True)
@@ -408,23 +434,35 @@ class RecorderOverlayTk:
         )
         self._count_label.pack(side=tk.LEFT, padx=(10, 0))
 
-        add_btn = tk.Button(
-            frame, text="Add target (F9)", command=self._enqueue_crop, bg="#333", fg="white", bd=0,
-            width=BAR_BUTTON_WIDTH, height=BUTTON_HEIGHT,
-        )
-        add_btn.pack(side=tk.RIGHT, padx=(4, 0))
-
-        next_btn = tk.Button(
-            frame, text="Next step (F10)", command=self._request_next_step, bg="#553", fg="white", bd=0,
-            width=BAR_BUTTON_WIDTH, height=BUTTON_HEIGHT,
-        )
-        next_btn.pack(side=tk.RIGHT, padx=(4, 0))
-
         stop_btn = tk.Button(
             frame, text="Stop (F8)", command=self._request_stop, bg="#722", fg="white", bd=0,
             width=BAR_BUTTON_WIDTH, height=BUTTON_HEIGHT,
         )
         stop_btn.pack(side=tk.RIGHT, padx=(4, 0))
+
+        next_btn = tk.Button(
+            frame, text="Next (F10)", command=self._request_next_step, bg="#553", fg="white", bd=0,
+            width=BAR_BUTTON_WIDTH, height=BUTTON_HEIGHT,
+        )
+        next_btn.pack(side=tk.RIGHT, padx=(4, 0))
+
+        prev_btn = tk.Button(
+            frame, text="Prev (F7)", command=self._request_prev_step, bg="#553", fg="white", bd=0,
+            width=BAR_BUTTON_WIDTH, height=BUTTON_HEIGHT,
+        )
+        prev_btn.pack(side=tk.RIGHT, padx=(4, 0))
+
+        undo_btn = tk.Button(
+            frame, text="Undo tgt (F6)", command=self._request_remove_last_target, bg="#553", fg="white", bd=0,
+            width=BAR_BUTTON_WIDTH, height=BUTTON_HEIGHT,
+        )
+        undo_btn.pack(side=tk.RIGHT, padx=(4, 0))
+
+        add_btn = tk.Button(
+            frame, text="Add target (F9)", command=self._enqueue_crop, bg="#333", fg="white", bd=0,
+            width=BAR_BUTTON_WIDTH, height=BUTTON_HEIGHT,
+        )
+        add_btn.pack(side=tk.RIGHT, padx=(4, 0))
 
         self._fit_bar()
 
@@ -455,11 +493,116 @@ class RecorderOverlayTk:
     def _hide_bar(self) -> None:
         if self._bar is not None:
             self._bar.withdraw()
+        if self._targets_win is not None:
+            self._targets_win.withdraw()
 
     def _set_counts(self, step: int, targets: int) -> None:
         if self._count_label is not None:
             self._count_label.config(text=f"step {step} · targets {targets}")
             self._fit_bar()
+
+    def _set_targets(self, step: int, targets: list[dict[str, Any]]) -> None:
+        self._targets_step = step
+        self._targets_data = list(targets)
+        if not self._targets_win:
+            self._build_targets_control()
+        if self._targets_win is not None:
+            self._targets_win.deiconify()
+            self._targets_win.lift()
+        self._rebuild_targets_rows()
+        self._update_targets_button_text()
+        self._fit_targets()
+
+    def _build_targets_control(self) -> None:
+        if self._targets_win is not None:
+            return
+        self._targets_win = tk.Toplevel(self._root)
+        self._targets_win.overrideredirect(True)
+        self._targets_win.attributes("-topmost", True)
+        self._targets_win.attributes("-alpha", 0.9)
+        self._targets_win.configure(bg="#1e1e1e")
+
+        outer = tk.Frame(self._targets_win, bg="#1e1e1e")
+        outer.pack(fill=tk.BOTH, expand=True, padx=4, pady=4)
+
+        self._targets_btn = tk.Button(
+            outer, text="", command=self._toggle_targets, bg="#333", fg="white", bd=0,
+            width=BAR_BUTTON_WIDTH + 4, height=BUTTON_HEIGHT,
+        )
+        self._targets_btn.pack(anchor=tk.W)
+
+        self._targets_pane = tk.Frame(outer, bg="#1e1e1e")
+        self._targets_visible = False
+
+        self._update_targets_button_text()
+        self._fit_targets()
+
+    def _update_targets_button_text(self) -> None:
+        if self._targets_btn is None:
+            return
+        arrow = "▾" if self._targets_visible else "▸"
+        self._targets_btn.config(text=f"{arrow} Targets · step {self._targets_step} ({len(self._targets_data)})")
+
+    def _toggle_targets(self) -> None:
+        if self._targets_pane is None:
+            return
+        if self._targets_visible:
+            self._targets_pane.pack_forget()
+            self._targets_visible = False
+        else:
+            self._targets_pane.pack(fill=tk.BOTH, expand=True, pady=(4, 0))
+            self._targets_visible = True
+        self._update_targets_button_text()
+        self._fit_targets()
+
+    def _fit_targets(self) -> None:
+        if self._targets_win is None:
+            return
+        self._targets_win.update_idletasks()
+        width = self._targets_win.winfo_reqwidth()
+        height = self._targets_win.winfo_reqheight()
+        self._targets_win.geometry(f"{width}x{height}+0+0")
+
+    def _rebuild_targets_rows(self) -> None:
+        if self._targets_pane is None:
+            return
+        for widget in self._targets_pane.winfo_children():
+            widget.destroy()
+        self._target_row_items = []
+
+        if not self._targets_data:
+            empty = tk.Label(
+                self._targets_pane, text="(no targets yet)", fg="#888", bg="#1e1e1e",
+                font=("Consolas", 9),
+            )
+            empty.pack(anchor=tk.W, pady=2)
+            return
+
+        for idx, target in enumerate(self._targets_data, start=1):
+            row = tk.Frame(self._targets_pane, bg="#1e1e1e")
+            row.pack(fill=tk.X, pady=1)
+
+            label = tk.Label(
+                row,
+                text=f"{idx}  {target.get('label', '')} · {target.get('action', 'left_click')}",
+                fg="white", bg="#1e1e1e", font=("Consolas", 9),
+            )
+            label.pack(side=tk.LEFT)
+
+            del_btn = tk.Button(
+                row, text="Delete", command=lambda i=idx - 1: self._request_remove_target(i),
+                bg="#722", fg="white", bd=0, width=8, height=BUTTON_HEIGHT,
+            )
+            del_btn.pack(side=tk.RIGHT, padx=(4, 0))
+
+    def _destroy_targets_control(self) -> None:
+        if self._targets_win is not None:
+            self._targets_win.destroy()
+            self._targets_win = None
+            self._targets_btn = None
+            self._targets_pane = None
+            self._targets_visible = False
+            self._target_row_items = []
 
     def _enqueue_crop(self) -> None:
         self._cmd_q.put({"cmd": "request_crop"})
@@ -483,10 +626,25 @@ class RecorderOverlayTk:
             if self._bar is not None:
                 self._bar.deiconify()
                 self._fit_bar()
+            if self._targets_win is not None:
+                self._targets_win.deiconify()
+                self._targets_win.lift()
+                self._fit_targets()
 
     def _request_next_step(self) -> None:
         if self._on_next_step is not None:
             self._on_next_step()
+
+    def _request_prev_step(self) -> None:
+        if self._on_prev_step is not None:
+            self._on_prev_step()
+
+    def _request_remove_last_target(self) -> None:
+        self._request_remove_target(-1)
+
+    def _request_remove_target(self, index: int) -> None:
+        if self._on_remove_target is not None:
+            self._on_remove_target(index)
 
     def _request_stop(self) -> None:
         if self._on_stop is not None:

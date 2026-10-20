@@ -290,14 +290,19 @@ class TestChainAndLifecycle:
 
 
 class FakeRecorder:
-    def __init__(self, *, on_toggle=None, on_crop_request=None, on_next_step=None, focus_watcher=None):
+    def __init__(self, *, on_toggle=None, on_crop_request=None, on_next_step=None, on_prev_step=None, on_remove_target=None, focus_watcher=None):
         self.state = "IDLE"
         self.steps = []
         self.current_targets = []
+        self._edit_index = 0
         self._name = None
+        self._plan_name = None
+        self._editing = False
         self._toggle_cb = on_toggle
         self._crop_cb = on_crop_request
         self._next_cb = on_next_step
+        self._prev_cb = on_prev_step
+        self._remove_cb = on_remove_target
         self._focus_watcher = focus_watcher
         self._last_region = None
 
@@ -306,18 +311,41 @@ class FakeRecorder:
             return False
         self.state = "RECORDING"
         self._name = name
+        self._plan_name = None
+        self._editing = False
         self.steps = []
         self.current_targets = []
+        self._edit_index = 0
+        return True
+
+    def start_edit(self, name, plan):
+        if self.state != "IDLE":
+            return False
+        self.state = "RECORDING"
+        self._name = plan.get("name") or name
+        self._plan_name = name
+        self._editing = True
+        self.steps = [dict(s) for s in plan.get("steps", [])]
+        self._edit_index = max(0, len(self.steps) - 1)
+        self.current_targets = self.steps[self._edit_index]["targets"] if self.steps else []
         return True
 
     def stop(self):
-        self.next_step()
         if self.state == "IDLE":
             return None
+        if self._edit_index >= len(self.steps) and self.current_targets:
+            self._commit_pending()
         self.state = "IDLE"
-        if not self.steps:
+        steps = [step for step in self.steps if step["targets"]]
+        if not steps:
             return None
-        return {"name": self._name or "recorded", "steps": list(self.steps)}
+        result = {"name": self._name or "recorded", "steps": steps}
+        if self._editing:
+            result["editing"] = True
+            result["plan_name"] = self._plan_name
+        self._editing = False
+        self._plan_name = None
+        return result
 
     def begin_crop(self):
         return ("frame", {"left": 0, "top": 0, "width": 10, "height": 10})
@@ -333,19 +361,54 @@ class FakeRecorder:
         return target
 
     def next_step(self):
-        if not self.current_targets:
+        if self.state != "RECORDING":
             return None
-        step = {"label": f"step {len(self.steps) + 1}", "targets": list(self.current_targets)}
-        self.steps.append(step)
+        if self._edit_index >= len(self.steps):
+            if not self.current_targets:
+                return None
+            self._commit_pending()
+        if self._edit_index + 1 < len(self.steps):
+            self._edit_index += 1
+            step = self.steps[self._edit_index]
+            self.current_targets = step["targets"]
+            return step
+        self._edit_index = len(self.steps)
         self.current_targets = []
+        return self.steps[-1]
+
+    def previous_step(self):
+        if self.state != "RECORDING" or self._edit_index == 0:
+            return None
+        if self._edit_index >= len(self.steps) and self.current_targets:
+            self._commit_pending()
+        self._edit_index -= 1
+        step = self.steps[self._edit_index]
+        self.current_targets = step["targets"]
         return step
+
+    def _commit_pending(self):
+        step = {"label": f"step {self._edit_index + 1}", "targets": list(self.current_targets)}
+        self.steps.append(step)
+        self._edit_index = len(self.steps) - 1
+        self.current_targets = step["targets"]
+        return step
+
+    def remove_target(self, index):
+        if self.state != "RECORDING" or not self.current_targets:
+            return None
+        if index < 0:
+            index = len(self.current_targets) + index
+        if index < 0 or index >= len(self.current_targets):
+            return None
+        return self.current_targets.pop(index)
 
     def status(self):
         return {
             "state": self.state,
             "step_count": len(self.steps),
             "target_count": len(self.current_targets),
-            "step_index": len(self.steps) + 1,
+            "step_index": self._edit_index + 1,
+            "current_targets": list(self.current_targets),
         }
 
     def last_region(self):
@@ -380,6 +443,9 @@ class FakeOverlay:
 
     def set_counts(self, step, targets):
         self.calls.append(("set_counts", step, targets))
+
+    def set_targets(self, step, targets):
+        self.calls.append(("set_targets", step, len(targets)))
 
 
 @pytest.fixture
@@ -419,7 +485,7 @@ class TestRecordingSession:
         result = patched_controller.start_recording(name="my flow")
         assert result["ok"] is True
         assert patched_controller._recorder.state == "RECORDING"
-        assert patched_controller._overlay.calls == ["start", ("show_bar", 1, 0)]
+        assert patched_controller._overlay.calls[:2] == ["start", ("show_bar", 1, 0)]
 
         patched_controller._recorder.accept_target(["crop"], "left_click")
         stop_result = patched_controller.stop_recording()
@@ -452,7 +518,8 @@ class TestRecordingSession:
         patched_controller.start_recording()
         patched_controller._on_crop_confirm(["crop"], "left_click", None, None, (5, -3))
         assert patched_controller._recorder.current_targets[-1]["offset"] == (5, -3)
-        assert patched_controller._overlay.calls[-1] == ("set_counts", 1, 1)
+        assert ("set_counts", 1, 1) in patched_controller._overlay.calls
+        assert ("set_targets", 1, 1) in patched_controller._overlay.calls
 
     @pytest.mark.positive
     def test_request_crop_delegates(self, patched_controller):
@@ -470,13 +537,110 @@ class TestRecordingSession:
         result = patched_controller.next_step()
         assert result["ok"] is True
         assert patched_controller._recorder.status()["step_count"] == 1
-        assert patched_controller._overlay.calls[-1] == ("set_counts", 2, 0)
+        assert patched_controller._overlay.calls[-2:] == [
+            ("set_counts", 2, 0),
+            ("set_targets", 2, 0),
+        ]
 
     @pytest.mark.negative
     def test_next_step_without_targets_fails(self, patched_controller):
         """next_step with no targets reports an error."""
         patched_controller.start_recording()
         result = patched_controller.next_step()
+        assert result["ok"] is False
+
+    @pytest.mark.positive
+    def test_previous_step_saves_current_then_rewinds(self, patched_controller):
+        """previous_step saves uncommitted targets, then reopens the previous step."""
+        patched_controller.start_recording()
+        patched_controller._recorder.accept_target(["crop"], "left_click")
+        patched_controller.next_step()
+        patched_controller._recorder.accept_target(["crop2"], "left_click")
+        result = patched_controller.previous_step()
+        assert result["ok"] is True
+        status = patched_controller._recorder.status()
+        assert status["step_count"] == 2
+        assert status["target_count"] == 1
+        assert patched_controller._overlay.calls[-2:] == [
+            ("set_counts", 1, 1),
+            ("set_targets", 1, 1),
+        ]
+
+    @pytest.mark.positive
+    def test_previous_step_with_empty_current_reopens_last(self, patched_controller):
+        """previous_step reopens the last step when no current targets exist."""
+        patched_controller.start_recording()
+        patched_controller._recorder.accept_target(["crop"], "left_click")
+        patched_controller.next_step()
+        result = patched_controller.previous_step()
+        assert result["ok"] is True
+        status = patched_controller._recorder.status()
+        assert status["step_count"] == 1
+        assert status["target_count"] == 1
+        assert patched_controller._overlay.calls[-2:] == [
+            ("set_counts", 1, 1),
+            ("set_targets", 1, 1),
+        ]
+
+    @pytest.mark.edge
+    def test_previous_at_first_step_keeps_next_working(self, patched_controller):
+        """Prev on step 1 is a no-op and does not clear the step for the next Next."""
+        patched_controller.start_recording()
+        patched_controller._recorder.accept_target(["a"], "left_click")
+        patched_controller.next_step()
+        patched_controller._recorder.accept_target(["b"], "left_click")
+        patched_controller.previous_step()
+        assert patched_controller._recorder.status()["step_index"] == 1
+
+        blocked = patched_controller.previous_step()
+        assert blocked["ok"] is False
+        assert patched_controller._recorder.status()["target_count"] == 1
+
+        forward = patched_controller.next_step()
+        assert forward["ok"] is True
+        assert patched_controller._recorder.status()["step_index"] == 2
+
+    @pytest.mark.positive
+    def test_next_step_after_previous_navigates_forward(self, patched_controller):
+        """next_step moves forward to the next saved step after going back."""
+        patched_controller.start_recording()
+        patched_controller._recorder.accept_target(["a"], "left_click")
+        patched_controller.next_step()
+        patched_controller._recorder.accept_target(["b"], "left_click")
+        patched_controller.next_step()
+        patched_controller._recorder.accept_target(["c"], "left_click")
+        patched_controller.previous_step()  # now editing step 2
+        result = patched_controller.next_step()
+        assert result["ok"] is True
+        status = patched_controller._recorder.status()
+        assert status["step_count"] == 3
+        assert status["step_index"] == 3
+        assert status["target_count"] == 1
+        assert patched_controller._overlay.calls[-2:] == [
+            ("set_counts", 3, 1),
+            ("set_targets", 3, 1),
+        ]
+
+    @pytest.mark.positive
+    def test_remove_target_delegates(self, patched_controller):
+        """remove_target removes the indexed target and refreshes the bar."""
+        patched_controller.start_recording()
+        patched_controller._recorder.accept_target(["a"], "left_click")
+        patched_controller._recorder.accept_target(["b"], "left_click")
+        result = patched_controller.remove_target(-1)
+        assert result["ok"] is True
+        status = patched_controller._recorder.status()
+        assert status["target_count"] == 1
+        assert patched_controller._overlay.calls[-2:] == [
+            ("set_counts", 1, 1),
+            ("set_targets", 1, 1),
+        ]
+
+    @pytest.mark.negative
+    def test_remove_target_with_no_targets_fails(self, patched_controller):
+        """remove_target with no targets reports an error."""
+        patched_controller.start_recording()
+        result = patched_controller.remove_target(0)
         assert result["ok"] is False
 
     @pytest.mark.positive
@@ -498,3 +662,81 @@ class TestRecordingSession:
         assert patched_controller._unique_plan_name("x") == "x (2)"
         pl.save_plan("x (2)", {"name": "X2", "steps": [{"type": "click", "targets": [{"template": "a.png"}]}]})
         assert patched_controller._unique_plan_name("x") == "x (3)"
+
+    @pytest.mark.positive
+    def test_start_edit_recording_loads_existing_plan(self, tmp_plans, patched_controller):
+        """start_recording with plan_name seeds the recorder with the existing plan."""
+        import engine.plan_loader as pl
+
+        pl.save_plan(
+            "existing",
+            {
+                "name": "Existing Plan",
+                "steps": [
+                    {"type": "click", "targets": [{"template": "a.png", "action": "left_click"}]},
+                    {"type": "click", "targets": [{"template": "b.png", "action": "right_click"}]},
+                ],
+                "config": {"tab_name": "Game", "delay": 1.0},
+            },
+        )
+        result = patched_controller.start_recording(plan_name="existing")
+        assert result["ok"] is True
+        assert patched_controller._recorder._editing is True
+        assert patched_controller._recorder._plan_name == "existing"
+        assert patched_controller._editing_plan_name == "existing"
+
+    @pytest.mark.positive
+    def test_stop_edit_recording_overwrites_original_plan(self, tmp_plans, patched_controller):
+        """Stopping an edit without save_as overwrites the original plan file."""
+        import engine.plan_loader as pl
+
+        pl.save_plan(
+            "existing",
+            {
+                "name": "Existing Plan",
+                "steps": [
+                    {"type": "click", "targets": [{"template": "a.png", "action": "left_click"}]},
+                ],
+                "config": {"tab_name": "Game", "delay": 1.0},
+            },
+        )
+        patched_controller.start_recording(plan_name="existing")
+        patched_controller._recorder.accept_target(["crop"], "left_click")
+        stop_result = patched_controller.stop_recording()
+        assert stop_result["ok"] is True
+        assert stop_result["name"] == "existing"
+        saved = pl.get_plan("existing")
+        assert saved["name"] == "Existing Plan"
+        assert saved["config"]["tab_name"] == "Game"
+        assert saved["config"]["delay"] == 1.0
+        assert len(saved["steps"]) == 1
+        assert saved["steps"][0]["targets"][-1]["template"] == "templates/recorded/x.png"
+
+    @pytest.mark.positive
+    def test_stop_edit_recording_save_as_creates_copy(self, tmp_plans, patched_controller):
+        """Stopping an edit with save_as saves to a new plan instead of overwriting."""
+        import engine.plan_loader as pl
+
+        pl.save_plan(
+            "existing",
+            {
+                "name": "Existing Plan",
+                "steps": [
+                    {"type": "click", "targets": [{"template": "a.png", "action": "left_click"}]},
+                ],
+            },
+        )
+        patched_controller.start_recording(plan_name="existing")
+        patched_controller._recorder.accept_target(["crop"], "left_click")
+        stop_result = patched_controller.stop_recording(save_as="existing copy")
+        assert stop_result["ok"] is True
+        assert stop_result["name"] == "existing copy"
+        assert pl.get_plan("existing") is not None
+        assert pl.get_plan("existing copy") is not None
+
+    @pytest.mark.negative
+    def test_start_edit_recording_missing_plan_returns_error(self, patched_controller):
+        """start_recording with an unknown plan_name reports a clear error."""
+        result = patched_controller.start_recording(plan_name="missing")
+        assert result["ok"] is False
+        assert "not found" in result["error"]

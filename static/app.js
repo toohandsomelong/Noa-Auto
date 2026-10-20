@@ -66,6 +66,7 @@ let snapshotRows = new Map();
 let isRecording = false;
 let recordedStepCount = 0;
 let lastRecordPayload = null;
+let recordingPlanName = null;
 let currentRunStep = { plan: null, stepIndex: null };
 
 function connect() {
@@ -178,9 +179,14 @@ function setControlsEnabled(enabled) {
 function updateRecordingState(data) {
     isRecording = data.state === "RECORDING";
     recordedStepCount = data.step_count || 0;
+    recordingPlanName = data.plan_name || null;
     const stepIndex = data.step_index || 1;
     const targetCount = data.target_count || 0;
-    recordBtn.textContent = isRecording ? `Stop (step ${stepIndex} · ${targetCount}t)` : "Record";
+    let label = isRecording ? `Stop (step ${stepIndex} · ${targetCount}t)` : "Record";
+    if (isRecording && recordingPlanName) {
+        label += ` · ${recordingPlanName}`;
+    }
+    recordBtn.textContent = label;
     recordBtn.classList.toggle("recording", isRecording);
     startBtn.disabled = isRecording || isActive;
 
@@ -194,9 +200,27 @@ function updateRecordingState(data) {
     }
 }
 
-async function toggleRecording() {
+async function toggleRecording(planName) {
     if (isRecording) {
-        const res = await fetch("/api/record/stop", { method: "POST" });
+        let saveAs = null;
+        if (recordingPlanName) {
+            const overwrite = confirm(
+                `Overwrite existing plan '${recordingPlanName}'?\n\nOK = overwrite, Cancel = save as copy`
+            );
+            if (!overwrite) {
+                const proposed = `${recordingPlanName} (copy)`;
+                saveAs = prompt("Save recorded plan as:", proposed);
+                if (!saveAs || !saveAs.trim()) {
+                    return;
+                }
+                saveAs = saveAs.trim();
+            }
+        }
+        const res = await fetch("/api/record/stop", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ save_as: saveAs }),
+        });
         const data = await res.json();
         if (data.ok && data.name) {
             appendLog(`Recorded plan '${data.name}' (${data.steps} steps)`);
@@ -208,10 +232,11 @@ async function toggleRecording() {
             appendLog(`Record stop: ${data.error}`);
         }
     } else {
+        const body = planName ? { plan_name: planName } : {};
         const res = await fetch("/api/record/start", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({}),
+            body: JSON.stringify(body),
         });
         const data = await res.json();
         if (!data.ok && data.error) {
@@ -614,6 +639,12 @@ function renderAvailable() {
         editBtn.disabled = isActive;
         editBtn.addEventListener("click", () => openPlanEditor(name));
 
+        const recBtn = document.createElement("button");
+        recBtn.textContent = "Record";
+        recBtn.title = "Record more steps for this plan";
+        recBtn.disabled = isActive;
+        recBtn.addEventListener("click", () => toggleRecording(name));
+
         const deleteBtn = document.createElement("button");
         deleteBtn.textContent = "Delete";
         deleteBtn.title = "Delete plan";
@@ -623,6 +654,7 @@ function renderAvailable() {
 
         controls.appendChild(addBtn);
         controls.appendChild(editBtn);
+        controls.appendChild(recBtn);
         controls.appendChild(deleteBtn);
         row.appendChild(controls);
         availableList.appendChild(row);
@@ -1429,7 +1461,7 @@ planEditorModal.addEventListener("click", (e) => {
     if (e.target === planEditorModal) closePlanEditor();
 });
 
-recordBtn.addEventListener("click", toggleRecording);
+recordBtn.addEventListener("click", () => toggleRecording());
 treeSource.addEventListener("change", updateTreeView);
 
 connect();

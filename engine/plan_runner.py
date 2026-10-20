@@ -29,7 +29,7 @@ STABLE_FRAMES = 2  # consecutive settled comparisons required to be "stable"
 # it run the general nearest-step scan. Keeps normal transitions instant (the
 # expected next step still advances immediately) while avoiding a premature
 # hunt when the next screen is simply still loading.
-SEARCH_DELAY = 2.0  # seconds to wait for the expected next step before scanning
+SEARCH_DELAY = 30.0  # seconds to wait for the expected next step before scanning
 
 
 # --- anchor selection weights ----------------------------------------------
@@ -308,6 +308,22 @@ class PlanRunner:
             target = origin + 1
         return {target} if 0 <= target < n else set()
 
+    def _expected_visible(self, expected: set[int], screenshot: Any) -> bool:
+        """True if any of the expected candidate steps currently matches."""
+        for idx in sorted(expected):
+            if self._step_match_strength(self.steps[idx], screenshot)[1] > 0:
+                return True
+        return False
+
+    def _expected_fallback(self, expected: set[int]) -> int | None:
+        """Return an expected step's goto_step_if_not_found, if it has one."""
+        for idx in sorted(expected):
+            step = self.steps[idx]
+            fallback = getattr(step, "_goto_step_if_not_found", None)
+            if fallback is not None and 0 <= fallback < len(self.steps):
+                return fallback
+        return None
+
     def _is_terminal_step(self, idx: int) -> bool:
         """True when every target of the step finishes the plan.
 
@@ -395,6 +411,24 @@ class PlanRunner:
         lost_since = self._lost_since
         lost_for = 0.0 if lost_since is None else time.monotonic() - lost_since
         searching = lost_for >= SEARCH_DELAY
+
+        origin = self._index
+        cur = self.current_step()
+        clicked_target = getattr(cur, "_clicked_target", None) if cur is not None else None
+        expected = self._expected_candidates(origin, clicked_target=clicked_target)
+
+        # After a click, if the expected next step is not visible, honor that
+        # step's goto_step_if_not_found immediately instead of waiting.
+        if clicked_target is not None and expected and not self._expected_visible(expected, screenshot):
+            fallback = self._expected_fallback(expected)
+            if fallback is not None:
+                if self.logger is not None:
+                    self.logger.info(
+                        f'[plan "{self.name}"] anchor: expected step {sorted(expected)[0]} not found, '
+                        f"using goto_step_if_not_found {fallback}"
+                    )
+                self._advance_to(fallback, force_reset=True)
+                return
 
         # Only the general hunt waits for the screen to settle. The expected next
         # step is a known destination, matched directly on the current frame, so

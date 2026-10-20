@@ -13,6 +13,7 @@ from core.recorder_overlay import (
     ACTION_RIGHT,
     ACTION_SCROLL,
     OverlayController,
+    RecorderOverlay,
     RecorderOverlayTk,
 )
 import core.recorder_overlay as recorder_overlay
@@ -225,6 +226,9 @@ def _make_fake_tk(*, toplevel_raises: bool = False) -> Any:
         def deiconify(self) -> None:
             pass
 
+        def lift(self) -> None:
+            pass
+
         def update_idletasks(self) -> None:
             pass
 
@@ -247,8 +251,14 @@ def _make_fake_tk(*, toplevel_raises: bool = False) -> Any:
         def pack(self, **kwargs: Any) -> None:
             pass
 
+        def pack_forget(self) -> None:
+            pass
+
         def pack_propagate(self, value: bool) -> None:
             pass
+
+        def winfo_children(self) -> list:
+            return []
 
     class FakeLabel:
         def __init__(self, parent: Any, **kwargs: Any) -> None:
@@ -262,10 +272,14 @@ def _make_fake_tk(*, toplevel_raises: bool = False) -> Any:
 
     class FakeButton:
         def __init__(self, parent: Any, **kwargs: Any) -> None:
-            pass
+            self.kwargs = dict(kwargs)
+            self.command = kwargs.get("command")
 
         def pack(self, **kwargs: Any) -> None:
             pass
+
+        def config(self, **kwargs: Any) -> None:
+            self.kwargs.update(kwargs)
 
     class FakeCanvas:
         def __init__(self, parent: Any, **kwargs: Any) -> None:
@@ -329,6 +343,7 @@ def _make_fake_tk(*, toplevel_raises: bool = False) -> Any:
         RIGHT="right",
         BOTH="both",
         X="x",
+        W="w",
         NW="nw",
     )
 
@@ -401,3 +416,61 @@ def test_set_counts_updates_label(fake_tk, fake_logger):
     view._set_counts(2, 3)
     assert view._count_label is not None
     assert view._count_label.kwargs["text"] == "step 2 · targets 3"
+
+
+def test_set_targets_creates_control_and_rows(fake_tk, fake_logger):
+    view = RecorderOverlayTk(queue.Queue(), OverlayController(), logger=fake_logger)
+    view._show_bar(1, 0)
+    targets = [
+        {"label": "step 1 target 1", "action": "left_click"},
+        {"label": "step 1 target 2", "action": "right_click"},
+    ]
+    view._set_targets(1, targets)
+    assert view._targets_win is not None
+    assert view._targets_btn is not None
+    assert view._targets_pane is not None
+    assert "step 1 (2)" in view._targets_btn.kwargs["text"]
+
+
+def test_set_targets_empty_shows_no_targets_yet(fake_tk, fake_logger):
+    view = RecorderOverlayTk(queue.Queue(), OverlayController(), logger=fake_logger)
+    view._show_bar(1, 0)
+    view._set_targets(1, [])
+    assert view._targets_pane is not None
+
+
+def test_targets_toggle_switches_visibility(fake_tk, fake_logger):
+    view = RecorderOverlayTk(queue.Queue(), OverlayController(), logger=fake_logger)
+    view._show_bar(1, 0)
+    view._set_targets(1, [{"label": "step 1 target 1", "action": "left_click"}])
+    assert view._targets_visible is False
+    view._toggle_targets()
+    assert view._targets_visible is True
+    view._toggle_targets()
+    assert view._targets_visible is False
+
+
+def test_targets_delete_row_callback(fake_tk, fake_logger):
+    removed = []
+    targets = [{"label": "step 1 target 1", "action": "left_click"}]
+    view = RecorderOverlayTk(
+        queue.Queue(),
+        OverlayController(),
+        on_remove_target=removed.append,
+        logger=fake_logger,
+    )
+    view._show_bar(1, 0)
+    view._set_targets(1, targets)
+    view._request_remove_target(0)
+    assert removed == [0]
+
+
+def test_set_targets_command_enqueues_data():
+    overlay = RecorderOverlay()
+    overlay.set_targets(2, [{"label": "t", "action": "left_click"}])
+    assert overlay._command_queue.qsize() == 1
+    item = overlay._command_queue.get_nowait()
+    assert item["cmd"] == "set_targets"
+    assert item["step"] == 2
+    assert len(item["targets"]) == 1
+

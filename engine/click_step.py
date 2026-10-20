@@ -37,6 +37,7 @@ class ClickStep(Step):
         for rule in self._rules:
             rule.reset()
         self._ready_until = time.time() + self._ready_delay
+        self._clicked_gone = False
 
     def reset_click_state(self) -> None:
         super().reset_click_state()
@@ -46,6 +47,7 @@ class ClickStep(Step):
     def tick(self, screenshot: Any) -> int:
         self.lost = False
         self.confirming = False
+        self._clicked_gone = False
         log = self.logger
         if time.time() < self._ready_until:
             if log:
@@ -57,11 +59,21 @@ class ClickStep(Step):
                 log.info(f'{self.log_prefix()} evaluating target "{rule.label}" ({rule.template})')
             result = self._apply(rule, screenshot)
             if result is not None:
+                if self._clicked_gone:
+                    continue
                 if log:
                     log.info(f'{self.log_prefix()} target "{rule.label}" decided result {result}')
                 return result
             if log:
                 log.info(f'{self.log_prefix()} target "{rule.label}" returned None (inconclusive)')
+
+        if self._clicked_gone:
+            if log:
+                log.info(
+                    f'{self.log_prefix()} clicked target gone - '
+                    f"waiting for anchor to locate next step"
+                )
+            return WAIT
 
         if self._goto_step_if_not_found is not None:
             if log:
@@ -147,12 +159,19 @@ class ClickStep(Step):
 
                 if log:
                     log.info(
-                        f'{self.log_prefix()} target "{target.label}": clicked target gone - '
-                        f"waiting for anchor to locate next step"
+                        f'{self.log_prefix()} target "{target.label}": clicked target gone'
                     )
                 self._clicked_target = target
                 self.lost = True
                 self.confirming = True
+
+                # If the clicked target had an explicit goto, preserve the old
+                # behaviour: stop evaluating this step and let the runner expect
+                # that specific step. Otherwise keep checking later targets in
+                # case one of them can still act on this screen.
+                if target.goto is None:
+                    self._clicked_gone = True
+                    return None
                 return WAIT
 
             return None
@@ -160,12 +179,18 @@ class ClickStep(Step):
         if target.action == ClickAction.CONTINUE:
             if log:
                 log.info(f"{self.label}: {target.label} already satisfied, advancing")
+            self._clicked_gone = False
+            self.lost = False
+            self.confirming = False
             self._fire(target.on_match, "on_match", target.label)
             return target.goto if target.goto is not None else self.index + 1
 
         if target.action == ClickAction.SCROLL:
             if log:
                 log.info(f"{self.label}: {target.label} matched after scroll, advancing")
+            self._clicked_gone = False
+            self.lost = False
+            self.confirming = False
             self._fire(target.on_match, "on_match", target.label)
             return target.goto if target.goto is not None else self.index + 1
 
@@ -175,6 +200,9 @@ class ClickStep(Step):
                 f"{target.click_count} clicks - re-clicking"
             )
 
+        self._clicked_gone = False
+        self.lost = False
+        self.confirming = False
         time.sleep(self.delay)
         point = self._target_point(m, target)
         post_scroll = 0 if target.scroll_point is not None else target.scrollValue

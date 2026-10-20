@@ -243,7 +243,7 @@ class TestScreenBotLoop:
 
     @pytest.mark.edge
     def test_misclick_back_reanchors(self):
-        """A non-terminal step whose screen returns to an earlier step re-anchors back within a few cycles."""
+        """After SEARCH_DELAY the general hunt re-anchors back to an earlier step."""
         r = run(
             "mb",
             num_steps=3,
@@ -256,7 +256,9 @@ class TestScreenBotLoop:
                 {"B.png"},
                 {"B.png"},
             ],
-            limit=10,
+            # ~0.52s fake seconds per cycle; SEARCH_DELAY is 30s, so the hunt
+            # cannot run until well past the old 10-cycle limit.
+            limit=100,
         )
         labels = [c[0] for c in r["clicks"]]
         assert "B.png" in labels and "C.png" in labels

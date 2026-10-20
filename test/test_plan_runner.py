@@ -374,6 +374,121 @@ class TestSelfAnchoring:
         s_calls = [c for c in fake_screen.match_calls if c[0] == "templates/x/S.png"]
         assert len(s_calls) == 2  # one per tick, not two per tick
 
+class TestMultiTargetContinuation:
+    """Suite: a multi-target step keeps acting on its remaining targets instead of
+    going lost and waiting for the anchor hunt."""
+
+    @pytest.mark.positive
+    def test_later_target_acts_without_search_delay(self, fake_screen):
+        """After the clicked target disappears, a later visible target is clicked immediately."""
+        steps = [
+            ClickStep([Target("templates/x/A.png"), Target("templates/x/B.png")]),
+            ClickStep([Target("templates/x/C.png")]),
+        ]
+        runner = _runner(steps)
+        fake_screen.visible = {"A.png"}
+        runner.tick("screen")  # click A
+        assert fake_screen.clicks == [("A.png", 15, 15)]
+
+        fake_screen.visible = {"B.png"}
+        fake_screen.clock.now += 0.1  # far less than SEARCH_DELAY
+        runner.tick("screen")
+        assert fake_screen.clicks[-1][0] == "B.png"
+        assert runner._index == 0
+
+    @pytest.mark.positive
+    def test_multi_target_then_advances_to_expected_next_step(self, fake_screen):
+        """After the later target is clicked, the runner advances to the natural next step."""
+        steps = [
+            ClickStep([Target("templates/x/A.png"), Target("templates/x/B.png")]),
+            ClickStep([Target("templates/x/C.png")]),
+        ]
+        runner = _runner(steps)
+        fake_screen.visible = {"A.png"}
+        runner.tick("screen")
+        fake_screen.visible = {"B.png"}
+        runner.tick("screen")  # click B
+        fake_screen.visible = {"C.png"}
+        _tick(runner, "screen", 2)  # B gone, C visible for two frames
+        assert runner._index == 1
+
+
+class TestExpectedStepFallback:
+    """Suite: an expected next step that is not visible can fall back via its
+    goto_step_if_not_found immediately, without waiting SEARCH_DELAY."""
+
+    @pytest.mark.positive
+    def test_expected_step_missing_uses_goto_step_if_not_found(self, fake_screen):
+        """After a click, if the expected next step is absent, use its fallback."""
+        steps = [
+            ClickStep([Target("templates/x/A.png")]),
+            ClickStep([Target("templates/x/B.png")], goto_step_if_not_found=3),
+            ClickStep([Target("templates/x/C.png")]),
+            ClickStep([Target("templates/x/D.png")]),
+        ]
+        runner = _runner(steps)
+        fake_screen.visible = {"A.png"}
+        runner.tick("screen")  # click A
+
+        fake_screen.visible = set()  # B (expected next) is absent
+        fake_screen.clock.now += 0.1  # far less than SEARCH_DELAY
+        runner.tick("screen")
+        assert runner._index == 3
+
+    @pytest.mark.positive
+    def test_expected_step_visible_does_not_use_fallback(self, fake_screen):
+        """When the expected next step is visible, it anchors normally."""
+        steps = [
+            ClickStep([Target("templates/x/A.png")]),
+            ClickStep([Target("templates/x/B.png")], goto_step_if_not_found=3),
+            ClickStep([Target("templates/x/C.png")]),
+            ClickStep([Target("templates/x/D.png")]),
+        ]
+        runner = _runner(steps)
+        fake_screen.visible = {"A.png"}
+        runner.tick("screen")
+
+        fake_screen.visible = {"B.png"}
+        runner.tick("screen")  # candidate B, 1/2
+        assert runner._index == 0
+        runner.tick("screen")  # candidate B, 2/2 -> anchor
+        assert runner._index == 1
+
+    @pytest.mark.negative
+    def test_fallback_without_click_does_not_jump(self, fake_screen):
+        """A step lost without a click must not use the next step's fallback."""
+        steps = [
+            ClickStep([Target("templates/x/A.png")]),
+            ClickStep([Target("templates/x/B.png")], goto_step_if_not_found=2),
+            ClickStep([Target("templates/x/C.png")]),
+        ]
+        runner = _runner(steps)
+        fake_screen.visible = set()
+        fake_screen.clock.now += 0.1
+        runner.tick("screen")
+        assert runner._index == 0
+
+    @pytest.mark.edge
+    def test_fallback_out_of_range_is_ignored(self, fake_screen):
+        """An invalid goto_step_if_not_found falls through to the normal wait."""
+        steps = [
+            ClickStep([Target("templates/x/A.png")]),
+            ClickStep([Target("templates/x/B.png")], goto_step_if_not_found=99),
+            ClickStep([Target("templates/x/C.png")]),
+        ]
+        runner = _runner(steps)
+        fake_screen.visible = {"A.png"}
+        runner.tick("screen")
+
+        fake_screen.visible = set()
+        fake_screen.clock.now += 0.1
+        runner.tick("screen")
+        assert runner._index == 0
+
+
+class TestTerminalAnchors:
+    """Suite: terminal steps and anchor restrictions."""
+
     @pytest.mark.positive
     def test_terminal_step_is_not_a_seek_anchor(self, fake_screen):
         """A visible terminal step (e.g. a persistent Home button) never anchors a lost step."""

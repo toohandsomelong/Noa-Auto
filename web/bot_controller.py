@@ -53,12 +53,16 @@ class BotController:
             on_toggle=self._on_record_toggle,
             on_crop_request=self._on_record_crop_request,
             on_next_step=self.next_step,
+            on_prev_step=self.previous_step,
+            on_remove_target=lambda: self.remove_target(-1),
             focus_watcher=self.focus_watcher,
         )
         self._overlay = RecorderOverlay(
             on_capture=self.begin_crop,
             on_confirm=self._on_crop_confirm,
             on_next_step=self.next_step,
+            on_prev_step=self.previous_step,
+            on_remove_target=self.remove_target,
             on_stop=self._on_record_toggle,
             logger=self.logger,
         )
@@ -71,6 +75,8 @@ class BotController:
         self._chain_lock = threading.Lock()
         self._active_target: dict[str, Any] | None = None
         self._focus_started: bool = False
+        self._editing_plan_name: str | None = None
+        self._editing_plan_config: dict[str, Any] | None = None
 
         self.logger.on_log(self._on_log_line)
         self.state_manager.on_state_change(self._on_state_change)
@@ -169,7 +175,9 @@ class BotController:
             except Exception:
                 pass
 
-    def start_recording(self, name: str | None = None) -> dict[str, Any]:
+    def start_recording(
+        self, name: str | None = None, plan_name: str | None = None
+    ) -> dict[str, Any]:
         if self.state_manager.is_active():
             self.logger.warning("Cannot record while bot is running")
             return {"ok": False, "error": "bot is running"}
@@ -179,14 +187,30 @@ class BotController:
                 self.logger.error("Failed to start overlay UI")
                 return {"ok": False, "error": "overlay unavailable"}
 
-        if not self._recorder.start(name=name):
+        started: bool
+        if plan_name is not None:
+            plan = get_plan(plan_name)
+            if plan is None:
+                self.logger.error(f"Plan '{plan_name}' not found")
+                return {"ok": False, "error": f"plan '{plan_name}' not found"}
+            self._editing_plan_name = plan_name
+            self._editing_plan_config = plan.get("config", {})
+            started = self._recorder.start_edit(plan_name, plan)
+        else:
+            self._editing_plan_name = None
+            self._editing_plan_config = None
+            started = self._recorder.start(name=name)
+        if not started:
             return {"ok": False, "error": "already recording"}
-        self._overlay.show_bar(step=1, targets=0)
+
+        status = self._recorder.status()
+        self._overlay.show_bar(step=status["step_index"], targets=status["target_count"])
+        self._sync_bar()
         self._broadcast_record()
         self.logger.state("RECORDING")
-        return {"ok": True, **self._recorder.status()}
+        return {"ok": True, **status}
 
-    def stop_recording(self) -> dict[str, Any]:
+    def stop_recording(self, save_as: str | None = None) -> dict[str, Any]:
         data = self._recorder.stop()
         self._overlay.hide_bar()
         self._overlay.hide_crop()
@@ -196,9 +220,17 @@ class BotController:
             self.logger.warning("No steps recorded")
             return {"ok": False, "error": "no steps recorded"}
 
-        data["config"] = self._build_record_config()
-        name = self._unique_plan_name(data["name"])
-        data["name"] = name
+        editing_plan = self._editing_plan_name
+        self._editing_plan_name = None
+        editing_config = self._editing_plan_config
+        self._editing_plan_config = None
+
+        data["config"] = self._build_record_config(editing_config)
+        if data.get("editing") and editing_plan is not None and save_as is None:
+            name = editing_plan
+        else:
+            name = self._unique_plan_name(save_as or data["name"])
+        data["name"] = data.get("name") or name
         try:
             save_plan(name, data)
             refresh_plans()
@@ -227,7 +259,27 @@ class BotController:
             return {"ok": False, "error": "no targets in current step"}
         self._sync_bar()
         self._broadcast_record()
-        self.logger.info(f"Added {step['label']} ({len(step['targets'])} targets)")
+        self.logger.info(f"{step['label']} ({len(step['targets'])} targets)")
+        return {"ok": True}
+
+    def previous_step(self) -> dict[str, Any]:
+        step = self._recorder.previous_step()
+        if step is None:
+            self.logger.warning("No previous step")
+            return {"ok": False, "error": "no previous step"}
+        self._sync_bar()
+        self._broadcast_record()
+        self.logger.info(f"Back to {step['label']} ({len(step.get('targets', []))} targets)")
+        return {"ok": True}
+
+    def remove_target(self, index: int) -> dict[str, Any]:
+        target = self._recorder.remove_target(index)
+        if target is None:
+            self.logger.warning("No target to remove")
+            return {"ok": False, "error": "no target to remove"}
+        self._sync_bar()
+        self._broadcast_record()
+        self.logger.info(f"Removed {target.get('label', 'target')}")
         return {"ok": True}
 
     def get_recording_status(self) -> dict[str, Any]:
@@ -236,6 +288,7 @@ class BotController:
     def _sync_bar(self) -> None:
         status = self._recorder.status()
         self._overlay.set_counts(status["step_index"], status["target_count"])
+        self._overlay.set_targets(status["step_index"], status["current_targets"])
 
     def _on_record_toggle(self) -> None:
         if self._recorder.state == "IDLE":
@@ -265,12 +318,18 @@ class BotController:
             self._sync_bar()
             self._broadcast_record()
 
-    def _build_record_config(self) -> dict[str, Any]:
+    def _build_record_config(
+        self, existing: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
         config: dict[str, Any] = {
             "game_path": None,
             "tab_name": None,
             "delay": 0.5,
         }
+        if isinstance(existing, dict):
+            for key in ("game_path", "tab_name", "delay", "capture_width", "capture_height"):
+                if key in existing and existing[key] is not None:
+                    config[key] = existing[key]
         region = self._recorder.last_region()
         if region is not None:
             config["capture_width"] = region["width"]

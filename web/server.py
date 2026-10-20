@@ -166,7 +166,10 @@ def create_app(controller: BotController) -> FastAPI:
     @app.post("/api/record/start")
     async def start_recording(body: dict) -> JSONResponse:
         name = body.get("name") if isinstance(body.get("name"), str) else None
-        return JSONResponse(content=controller.start_recording(name=name))
+        plan_name = body.get("plan_name") if isinstance(body.get("plan_name"), str) else None
+        return JSONResponse(
+            content=controller.start_recording(name=name, plan_name=plan_name)
+        )
 
     @app.post("/api/record/crop")
     async def record_crop() -> JSONResponse:
@@ -177,8 +180,10 @@ def create_app(controller: BotController) -> FastAPI:
         return JSONResponse(content=controller.next_step())
 
     @app.post("/api/record/stop")
-    async def stop_recording() -> JSONResponse:
-        return JSONResponse(content=controller.stop_recording())
+    async def stop_recording(body: dict | None = None) -> JSONResponse:
+        body = body or {}
+        save_as = body.get("save_as") if isinstance(body.get("save_as"), str) else None
+        return JSONResponse(content=controller.stop_recording(save_as=save_as))
 
     @app.get("/api/record/status")
     async def recording_status() -> JSONResponse:

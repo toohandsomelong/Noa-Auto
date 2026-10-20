@@ -255,3 +255,77 @@ class TestClickStepRuleLifecycle:
         assert step.tick("screen") == WAIT
         _, x, y = fake_screen.clicks[0]
         assert (x, y) == (15, 15)
+
+
+class TestMultiTargetStepAfterClick:
+    """Suite: a step with multiple targets keeps evaluating the remaining rules
+    after its clicked target disappears, instead of immediately going lost."""
+
+    @pytest.mark.positive
+    def test_clicked_gone_then_later_target_clicks(self, fake_screen):
+        """After the clicked target vanishes, a later visible target is clicked."""
+        first = Target("templates/x/A.png")
+        second = Target("templates/x/B.png")
+        step = _step([first, second])
+
+        fake_screen.visible = {"A.png"}
+        assert step.tick("screen") == WAIT
+        assert len(fake_screen.clicks) == 1
+        assert fake_screen.clicks[0][0] == "A.png"
+
+        fake_screen.visible = {"B.png"}
+        result = step.tick("screen")
+        assert result == WAIT
+        assert step.lost is False
+        assert len(fake_screen.clicks) == 2
+        assert fake_screen.clicks[1][0] == "B.png"
+
+    @pytest.mark.positive
+    def test_clicked_gone_with_no_later_target_stays_lost(self, fake_screen):
+        """A single clicked target that disappears still reports lost."""
+        step = _step([Target("templates/x/A.png")])
+        fake_screen.visible = {"A.png"}
+        step.tick("screen")
+        fake_screen.visible = set()
+        assert step.tick("screen") == WAIT
+        assert step.lost is True
+
+    @pytest.mark.positive
+    def test_explicit_goto_preserves_immediate_lost(self, fake_screen):
+        """A clicked target with explicit goto still short-circuits later targets."""
+        first = Target("templates/x/A.png", goto=5)
+        second = Target("templates/x/B.png")
+        step = _step([first, second])
+
+        fake_screen.visible = {"A.png"}
+        step.tick("screen")
+        fake_screen.visible = {"B.png"}
+        assert step.tick("screen") == WAIT
+        assert step.lost is True
+        assert step._clicked_target is first
+        assert len(fake_screen.clicks) == 1
+
+    @pytest.mark.positive
+    def test_later_target_advance_clears_lost(self, fake_screen):
+        """If a later target matches with CONTINUE, the step advances and is not lost."""
+        first = Target("templates/x/A.png")
+        second = Target("templates/x/B.png", action=ClickAction.CONTINUE)
+        step = _step([first, second])
+
+        fake_screen.visible = {"A.png"}
+        step.tick("screen")
+        fake_screen.visible = {"B.png"}
+        assert step.tick("screen") == 1
+        assert step.lost is False
+
+    @pytest.mark.edge
+    def test_first_tick_only_clicks_first_match(self, fake_screen):
+        """On the first tick, only the first visible target is clicked."""
+        first = Target("templates/x/A.png")
+        second = Target("templates/x/B.png")
+        step = _step([first, second])
+
+        fake_screen.visible = {"A.png", "B.png"}
+        assert step.tick("screen") == WAIT
+        assert len(fake_screen.clicks) == 1
+        assert fake_screen.clicks[0][0] == "A.png"
