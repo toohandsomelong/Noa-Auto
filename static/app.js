@@ -32,6 +32,7 @@ const planEditorError = document.getElementById("plan-editor-error");
 const addStepBtn = document.getElementById("add-step-btn");
 const addInterruptStepBtn = document.getElementById("add-interrupt-step-btn");
 const planSaveBtn = document.getElementById("plan-save-btn");
+const planContinueRecordBtn = document.getElementById("plan-continue-record-btn");
 const cfgGamePathInput = document.getElementById("cfg-game-path");
 const cfgTabNameInput = document.getElementById("cfg-tab-name");
 const cfgBrowseBtn = document.getElementById("cfg-browse-btn");
@@ -156,6 +157,7 @@ function updateState(state) {
     startBtn.disabled = isActive || isRecording;
     stopBtn.disabled = !isActive;
     recordBtn.disabled = isActive;
+    planContinueRecordBtn.disabled = isActive || isRecording || editingFilename === null;
     setControlsEnabled(!isActive);
 
     if (treeSection) {
@@ -189,6 +191,7 @@ function updateRecordingState(data) {
     recordBtn.textContent = label;
     recordBtn.classList.toggle("recording", isRecording);
     startBtn.disabled = isRecording || isActive;
+    planContinueRecordBtn.disabled = isActive || isRecording || editingFilename === null;
 
     lastRecordPayload = data;
     populateTreeSourceOptions();
@@ -639,12 +642,6 @@ function renderAvailable() {
         editBtn.disabled = isActive;
         editBtn.addEventListener("click", () => openPlanEditor(name));
 
-        const recBtn = document.createElement("button");
-        recBtn.textContent = "Record";
-        recBtn.title = "Record more steps for this plan";
-        recBtn.disabled = isActive;
-        recBtn.addEventListener("click", () => toggleRecording(name));
-
         const deleteBtn = document.createElement("button");
         deleteBtn.textContent = "Delete";
         deleteBtn.title = "Delete plan";
@@ -654,7 +651,6 @@ function renderAvailable() {
 
         controls.appendChild(addBtn);
         controls.appendChild(editBtn);
-        controls.appendChild(recBtn);
         controls.appendChild(deleteBtn);
         row.appendChild(controls);
         availableList.appendChild(row);
@@ -910,6 +906,8 @@ async function openPlanEditor(name) {
     renderPlanSteps();
     renderPlanInterruptSteps();
     hidePlanError();
+    planContinueRecordBtn.hidden = editingFilename === null;
+    planContinueRecordBtn.disabled = isActive || isRecording;
     planEditorModal.classList.remove("hidden");
     planTreeModal.classList.remove("hidden");
     renderEditorTree();
@@ -918,8 +916,19 @@ async function openPlanEditor(name) {
 function closePlanEditor() {
     planEditorModal.classList.add("hidden");
     planTreeModal.classList.add("hidden");
+    planContinueRecordBtn.hidden = true;
     planEditorState = newPlanState();
     editingFilename = null;
+}
+
+function continueRecordingFromEditor() {
+    if (!editingFilename || isRecording || isActive) return;
+    if (!confirm("Continue recording will use the saved plan and discard unsaved editor changes. Continue?")) {
+        return;
+    }
+    const planName = editingFilename;
+    closePlanEditor();
+    toggleRecording(planName);
 }
 
 function loadPlanConfig() {
@@ -1447,6 +1456,7 @@ async function deletePlan(name) {
 createPlanBtn.addEventListener("click", () => openPlanEditor(null));
 planEditorClose.addEventListener("click", closePlanEditor);
 planSaveBtn.addEventListener("click", savePlan);
+planContinueRecordBtn.addEventListener("click", continueRecordingFromEditor);
 planNameInput.addEventListener("input", renderEditorTree);
 planTreeClose.addEventListener("click", () => planTreeModal.classList.add("hidden"));
 addStepBtn.addEventListener("click", () => {

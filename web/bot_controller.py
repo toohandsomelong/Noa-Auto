@@ -64,6 +64,8 @@ class BotController:
             on_prev_step=self.previous_step,
             on_remove_target=self.remove_target,
             on_stop=self._on_record_toggle,
+            on_save=self.save_recording_as,
+            on_discard=self.discard_recording,
             logger=self.logger,
         )
         self._overlay_started = False
@@ -204,7 +206,10 @@ class BotController:
             return {"ok": False, "error": "already recording"}
 
         status = self._recorder.status()
-        self._overlay.show_bar(step=status["step_index"], targets=status["target_count"])
+        default_name = status.get("plan_name") or status.get("name") or ""
+        self._overlay.show_bar(
+            step=status["step_index"], targets=status["target_count"], name=default_name
+        )
         self._sync_bar()
         self._broadcast_record()
         self.logger.state("RECORDING")
@@ -239,6 +244,18 @@ class BotController:
             return {"ok": False, "error": str(e)}
         self.logger.info(f"Saved recorded plan '{name}' ({len(data['steps'])} steps)")
         return {"ok": True, "name": name, "steps": len(data["steps"])}
+
+    def discard_recording(self) -> dict[str, Any]:
+        data = self._recorder.stop()
+        self._overlay.hide_bar()
+        self._overlay.hide_crop()
+        self._editing_plan_name = None
+        self._editing_plan_config = None
+        self._broadcast_record()
+        self.logger.state("IDLE")
+        steps = len(data["steps"]) if data is not None else 0
+        self.logger.info(f"Recording discarded ({steps} steps)")
+        return {"ok": True, "discarded": True, "steps": steps}
 
     def begin_crop(self) -> dict[str, Any]:
         result = self._recorder.begin_crop()
@@ -290,11 +307,22 @@ class BotController:
         self._overlay.set_counts(status["step_index"], status["target_count"])
         self._overlay.set_targets(status["step_index"], status["current_targets"])
 
+    def save_recording_as(self, name: str | None) -> None:
+        if not name or (
+            self._editing_plan_name is not None and name == self._editing_plan_name
+        ):
+            self.stop_recording()
+        else:
+            self.stop_recording(save_as=name)
+
     def _on_record_toggle(self) -> None:
         if self._recorder.state == "IDLE":
             self.start_recording()
         else:
-            self.stop_recording()
+            status = self._recorder.status()
+            default_name = status.get("plan_name") or status.get("name") or ""
+            self.logger.info("Recording stop requested")
+            self._overlay.request_stop_dialog(default_name)
 
     def _on_record_crop_request(self) -> None:
         self._overlay.request_crop()

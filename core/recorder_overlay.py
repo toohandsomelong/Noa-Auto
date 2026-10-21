@@ -3,6 +3,7 @@ from __future__ import annotations
 import queue
 import threading
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 import cv2
@@ -34,6 +35,8 @@ EDGE_MARGIN = 6
 CROSSHAIR_RADIUS = 12
 HANDLE_SIZE = 4
 CAPTURE_HIDE_DELAY_MS = 120
+TARGET_THUMB_SIZE = 32
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 
 class OverlayController:
@@ -216,6 +219,8 @@ class RecorderOverlay:
         on_prev_step: Callable[[], None] | None = None,
         on_remove_target: Callable[[int], None] | None = None,
         on_stop: Callable[[], None] | None = None,
+        on_save: Callable[[str], None] | None = None,
+        on_discard: Callable[[], None] | None = None,
         logger: Logger | None = None,
     ) -> None:
         self._controller = OverlayController()
@@ -226,6 +231,8 @@ class RecorderOverlay:
         self._on_prev_step = on_prev_step
         self._on_remove_target = on_remove_target
         self._on_stop = on_stop
+        self._on_save = on_save
+        self._on_discard = on_discard
         self._logger = logger
         self._thread: threading.Thread | None = None
         self._stop_event = threading.Event()
@@ -247,14 +254,17 @@ class RecorderOverlay:
             self._thread.join(timeout=2)
             self._thread = None
 
-    def show_bar(self, step: int = 1, targets: int = 0) -> None:
-        self._put({"cmd": "show_bar", "step": step, "targets": targets})
+    def show_bar(self, step: int = 1, targets: int = 0, name: str = "") -> None:
+        self._put({"cmd": "show_bar", "step": step, "targets": targets, "name": name})
 
     def hide_bar(self) -> None:
         self._put({"cmd": "hide_bar"})
 
     def request_crop(self) -> None:
         self._put({"cmd": "request_crop"})
+
+    def request_stop_dialog(self, default_name: str = "") -> None:
+        self._put({"cmd": "stop_dialog", "name": default_name})
 
     def show_crop(self, frame: np.ndarray, region: dict[str, int]) -> None:
         self._controller.show(frame, region)
@@ -284,6 +294,8 @@ class RecorderOverlay:
                 on_prev_step=self._on_prev_step,
                 on_remove_target=self._on_remove_target,
                 on_stop=self._on_stop,
+                on_save=self._on_save,
+                on_discard=self._on_discard,
                 logger=self._logger,
             )
             view.run()
@@ -303,6 +315,8 @@ class RecorderOverlayTk:
         on_prev_step: Callable[[], None] | None = None,
         on_remove_target: Callable[[int], None] | None = None,
         on_stop: Callable[[], None] | None = None,
+        on_save: Callable[[str], None] | None = None,
+        on_discard: Callable[[], None] | None = None,
         logger: Logger | None = None,
     ) -> None:
         self._cmd_q = command_queue
@@ -313,6 +327,8 @@ class RecorderOverlayTk:
         self._on_prev_step = on_prev_step
         self._on_remove_target = on_remove_target
         self._on_stop = on_stop
+        self._on_save = on_save
+        self._on_discard = on_discard
         self._logger = logger
 
         try:
@@ -351,6 +367,14 @@ class RecorderOverlayTk:
         self._targets_step = 1
         self._targets_data: list[dict[str, Any]] = []
         self._target_row_items: list[Any] = []
+        self._target_photos: list[Any] = []
+
+        self._record_name = ""
+        self._stop_dialog: tk.Toplevel | None = None
+        self._stop_entry: tk.Entry | None = None
+        self._stop_save_btn: tk.Button | None = None
+        self._stop_discard_btn: tk.Button | None = None
+        self._stop_x_btn: tk.Button | None = None
 
     def run(self) -> None:
         self._schedule_poll()
@@ -381,7 +405,9 @@ class RecorderOverlayTk:
         if cmd == "destroy":
             self._destroy()
         elif cmd == "show_bar":
-            self._show_bar(item.get("step", 1), item.get("targets", 0))
+            self._show_bar(
+                item.get("step", 1), item.get("targets", 0), item.get("name", "")
+            )
         elif cmd == "hide_bar":
             self._hide_bar()
         elif cmd == "set_counts":
@@ -390,6 +416,8 @@ class RecorderOverlayTk:
             self._set_targets(item.get("step", 1), item.get("targets") or [])
         elif cmd == "request_crop":
             self._request_crop()
+        elif cmd == "stop_dialog":
+            self._show_stop_dialog(item.get("name", ""))
         elif cmd == "show_crop":
             self._show_crop(item["frame"], item["region"])
         elif cmd == "hide_crop":
@@ -399,12 +427,14 @@ class RecorderOverlayTk:
         if self._after_id:
             self._root.after_cancel(self._after_id)
             self._after_id = None
+        self._close_stop_dialog()
         self._hide_crop()
         self._hide_bar()
         self._destroy_targets_control()
         self._root.quit()
 
-    def _show_bar(self, step: int, targets: int) -> None:
+    def _show_bar(self, step: int, targets: int, name: str = "") -> None:
+        self._record_name = name
         if self._bar is not None:
             self._set_counts(step, targets)
             self._bar.deiconify()
@@ -491,6 +521,7 @@ class RecorderOverlayTk:
             self._toolbar_win.lift()
 
     def _hide_bar(self) -> None:
+        self._close_stop_dialog()
         if self._bar is not None:
             self._bar.withdraw()
         if self._targets_win is not None:
@@ -569,6 +600,7 @@ class RecorderOverlayTk:
         for widget in self._targets_pane.winfo_children():
             widget.destroy()
         self._target_row_items = []
+        self._target_photos = []
 
         if not self._targets_data:
             empty = tk.Label(
@@ -581,6 +613,18 @@ class RecorderOverlayTk:
         for idx, target in enumerate(self._targets_data, start=1):
             row = tk.Frame(self._targets_pane, bg="#1e1e1e")
             row.pack(fill=tk.X, pady=1)
+
+            templates = target.get("template")
+            paths = templates if isinstance(templates, list) else [templates]
+            for path in paths:
+                if not isinstance(path, str) or not path:
+                    continue
+                photo = self._load_target_photo(path)
+                if photo is None:
+                    continue
+                self._target_photos.append(photo)
+                thumb = tk.Label(row, image=photo, bg="#1e1e1e", bd=0)
+                thumb.pack(side=tk.LEFT, padx=(0, 4))
 
             label = tk.Label(
                 row,
@@ -595,6 +639,28 @@ class RecorderOverlayTk:
             )
             del_btn.pack(side=tk.RIGHT, padx=(4, 0))
 
+    @staticmethod
+    def _load_target_photo(path: str) -> Any | None:
+        if Image is None or ImageTk is None:
+            return None
+        try:
+            filepath = Path(path)
+            if not filepath.is_absolute():
+                filepath = PROJECT_ROOT / filepath
+            img = cv2.imread(str(filepath))
+            if img is None or img.size == 0:
+                return None
+            height, width = img.shape[:2]
+            if height <= 0 or width <= 0:
+                return None
+            scale = min(TARGET_THUMB_SIZE / width, TARGET_THUMB_SIZE / height)
+            size = (max(1, int(width * scale)), max(1, int(height * scale)))
+            thumb = cv2.resize(img, size, interpolation=cv2.INTER_AREA)
+            rgb = cv2.cvtColor(thumb, cv2.COLOR_BGR2RGB)
+            return ImageTk.PhotoImage(image=Image.fromarray(rgb))
+        except Exception:
+            return None
+
     def _destroy_targets_control(self) -> None:
         if self._targets_win is not None:
             self._targets_win.destroy()
@@ -603,6 +669,7 @@ class RecorderOverlayTk:
             self._targets_pane = None
             self._targets_visible = False
             self._target_row_items = []
+            self._target_photos = []
 
     def _enqueue_crop(self) -> None:
         self._cmd_q.put({"cmd": "request_crop"})
@@ -647,8 +714,123 @@ class RecorderOverlayTk:
             self._on_remove_target(index)
 
     def _request_stop(self) -> None:
-        if self._on_stop is not None:
-            self._on_stop()
+        self._show_stop_dialog(self._record_name)
+
+    def _show_stop_dialog(self, default_name: str = "") -> None:
+        if self._stop_dialog is not None:
+            self._stop_dialog.deiconify()
+            self._stop_dialog.lift()
+            self._focus_stop_entry()
+            return
+
+        self._stop_dialog = tk.Toplevel(self._root)
+        self._stop_dialog.overrideredirect(True)
+        self._stop_dialog.attributes("-topmost", True)
+        self._stop_dialog.attributes("-alpha", 0.95)
+        self._stop_dialog.configure(bg="#1e1e1e")
+
+        frame = tk.Frame(self._stop_dialog, bg="#1e1e1e")
+        frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=8)
+
+        header = tk.Frame(frame, bg="#1e1e1e")
+        header.pack(fill=tk.X)
+
+        tk.Label(
+            header, text="Save plan", fg="white", bg="#1e1e1e",
+            font=("Consolas", 10, "bold"),
+        ).pack(side=tk.LEFT)
+
+        self._stop_x_btn = tk.Button(
+            header, text="\u00d7", command=self._confirm_stop_cancel,
+            bg="#1e1e1e", fg="#d4d4d4", bd=0, width=2, height=BUTTON_HEIGHT,
+        )
+        self._stop_x_btn.pack(side=tk.RIGHT)
+
+        self._stop_entry = tk.Entry(
+            frame, bg="#2a2a2a", fg="white", insertbackground="white",
+            font=("Consolas", 10), width=32,
+        )
+        self._stop_entry.insert(0, default_name)
+        self._stop_entry.pack(fill=tk.X, pady=(6, 6))
+
+        buttons = tk.Frame(frame, bg="#1e1e1e")
+        buttons.pack(anchor=tk.E)
+
+        self._stop_save_btn = tk.Button(
+            buttons, text="Save", command=self._confirm_stop_save,
+            bg="#272", fg="white", bd=0, width=10, height=BUTTON_HEIGHT,
+        )
+        self._stop_save_btn.pack(side=tk.RIGHT, padx=(4, 0))
+
+        self._stop_discard_btn = tk.Button(
+            buttons, text="Don't Save", command=self._confirm_stop_discard,
+            bg="#722", fg="white", bd=0, width=10, height=BUTTON_HEIGHT,
+        )
+        self._stop_discard_btn.pack(side=tk.RIGHT)
+
+        self._stop_entry.bind("<Return>", lambda _e: self._confirm_stop_save())
+        self._stop_entry.bind("<Escape>", lambda _e: self._confirm_stop_cancel())
+
+        self._fit_stop_dialog()
+        self._stop_dialog.deiconify()
+        self._stop_dialog.lift()
+        self._stop_dialog.focus_force()
+        self._focus_stop_entry()
+        if self._logger is not None:
+            self._logger.info("Recording stop dialog opened")
+
+    def _fit_stop_dialog(self) -> None:
+        if self._stop_dialog is None:
+            return
+        self._stop_dialog.update_idletasks()
+        width = max(320, self._stop_dialog.winfo_reqwidth())
+        height = self._stop_dialog.winfo_reqheight()
+        screen_w = self._stop_dialog.winfo_screenwidth()
+        x = max(0, (screen_w - width) // 2)
+        y = max(0, TARGET_THUMB_SIZE * 2)
+        self._stop_dialog.geometry(f"{width}x{height}+{x}+{y}")
+        try:
+            self._stop_dialog.grab_set()
+        except Exception:
+            pass
+
+    def _focus_stop_entry(self) -> None:
+        if self._stop_entry is None:
+            return
+        try:
+            self._stop_entry.focus_set()
+            self._stop_entry.selection_range(0, tk.END)
+        except Exception:
+            pass
+
+    def _confirm_stop_save(self) -> None:
+        if self._stop_dialog is None or self._stop_entry is None:
+            return
+        name = self._stop_entry.get().strip()
+        self._close_stop_dialog()
+        if self._on_save is not None:
+            self._on_save(name)
+
+    def _confirm_stop_discard(self) -> None:
+        self._close_stop_dialog()
+        if self._on_discard is not None:
+            self._on_discard()
+
+    def _confirm_stop_cancel(self) -> None:
+        self._close_stop_dialog()
+
+    def _close_stop_dialog(self) -> None:
+        if self._stop_dialog is not None:
+            try:
+                self._stop_dialog.grab_release()
+            except Exception:
+                pass
+            self._stop_dialog.destroy()
+        self._stop_dialog = None
+        self._stop_entry = None
+        self._stop_save_btn = None
+        self._stop_discard_btn = None
+        self._stop_x_btn = None
 
     def _show_crop(self, frame: np.ndarray, region: dict[str, int]) -> None:
         if self._crop_win is not None:

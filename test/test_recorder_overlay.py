@@ -4,6 +4,7 @@ import queue
 import types
 from typing import Any
 
+import cv2
 import numpy as np
 import pytest
 
@@ -235,11 +236,26 @@ def _make_fake_tk(*, toplevel_raises: bool = False) -> Any:
         def winfo_screenwidth(self) -> int:
             return 1920
 
+        def winfo_screenheight(self) -> int:
+            return 1080
+
         def winfo_reqwidth(self) -> int:
             return 320
 
         def winfo_reqheight(self) -> int:
             return 40
+
+        def transient(self, parent: Any) -> None:
+            pass
+
+        def focus_force(self) -> None:
+            pass
+
+        def grab_set(self) -> None:
+            pass
+
+        def grab_release(self) -> None:
+            pass
 
         def bind(self, *args: Any, **kwargs: Any) -> None:
             pass
@@ -280,6 +296,29 @@ def _make_fake_tk(*, toplevel_raises: bool = False) -> Any:
 
         def config(self, **kwargs: Any) -> None:
             self.kwargs.update(kwargs)
+
+    class FakeEntry:
+        def __init__(self, parent: Any, **kwargs: Any) -> None:
+            self.kwargs = dict(kwargs)
+            self._value = ""
+
+        def insert(self, index: int, value: str) -> None:
+            self._value = value
+
+        def get(self) -> str:
+            return self._value
+
+        def pack(self, **kwargs: Any) -> None:
+            pass
+
+        def bind(self, *args: Any, **kwargs: Any) -> None:
+            pass
+
+        def focus_set(self) -> None:
+            pass
+
+        def selection_range(self, *args: Any) -> None:
+            pass
 
     class FakeCanvas:
         def __init__(self, parent: Any, **kwargs: Any) -> None:
@@ -335,6 +374,7 @@ def _make_fake_tk(*, toplevel_raises: bool = False) -> Any:
         Frame=FakeFrame,
         Label=FakeLabel,
         Button=FakeButton,
+        Entry=FakeEntry,
         Canvas=FakeCanvas,
         StringVar=FakeStringVar,
         Radiobutton=FakeRadiobutton,
@@ -342,9 +382,11 @@ def _make_fake_tk(*, toplevel_raises: bool = False) -> Any:
         LEFT="left",
         RIGHT="right",
         BOTH="both",
+        E="e",
         X="x",
         W="w",
         NW="nw",
+        END="end",
     )
 
 
@@ -432,6 +474,75 @@ def test_set_targets_creates_control_and_rows(fake_tk, fake_logger):
     assert "step 1 (2)" in view._targets_btn.kwargs["text"]
 
 
+def _write_template(path):
+    cv2.imwrite(str(path), np.zeros((8, 8, 3), dtype=np.uint8))
+    return str(path)
+
+
+@pytest.mark.positive
+def test_set_targets_loads_template_thumbnail(fake_tk, fake_logger, tmp_path):
+    """A target with a valid template gets a thumbnail photo."""
+    template = _write_template(tmp_path / "target.png")
+    view = RecorderOverlayTk(queue.Queue(), OverlayController(), logger=fake_logger)
+    view._show_bar(1, 0)
+    view._set_targets(
+        1,
+        [{"label": "step 1 target 1", "action": "left_click", "template": template}],
+    )
+    assert len(view._target_photos) == 1
+
+
+@pytest.mark.positive
+def test_set_targets_loads_multiple_template_thumbnails(fake_tk, fake_logger, tmp_path):
+    """An AND target with two templates gets two thumbnails."""
+    first = _write_template(tmp_path / "a.png")
+    second = _write_template(tmp_path / "b.png")
+    view = RecorderOverlayTk(queue.Queue(), OverlayController(), logger=fake_logger)
+    view._show_bar(1, 0)
+    view._set_targets(
+        1,
+        [{"label": "step 1 target 1", "action": "left_click", "template": [first, second]}],
+    )
+    assert len(view._target_photos) == 2
+
+
+@pytest.mark.negative
+def test_set_targets_missing_template_skips_thumbnail(fake_tk, fake_logger, tmp_path):
+    """A missing template file must not break the row."""
+    view = RecorderOverlayTk(queue.Queue(), OverlayController(), logger=fake_logger)
+    view._show_bar(1, 0)
+    view._set_targets(
+        1,
+        [
+            {
+                "label": "step 1 target 1",
+                "action": "left_click",
+                "template": str(tmp_path / "missing.png"),
+            }
+        ],
+    )
+    assert view._target_photos == []
+
+
+@pytest.mark.edge
+def test_set_targets_partial_templates_load_available(fake_tk, fake_logger, tmp_path):
+    """A mixed template list loads only the files that exist."""
+    valid = _write_template(tmp_path / "valid.png")
+    view = RecorderOverlayTk(queue.Queue(), OverlayController(), logger=fake_logger)
+    view._show_bar(1, 0)
+    view._set_targets(
+        1,
+        [
+            {
+                "label": "step 1 target 1",
+                "action": "left_click",
+                "template": [str(tmp_path / "missing.png"), valid],
+            }
+        ],
+    )
+    assert len(view._target_photos) == 1
+
+
 def test_set_targets_empty_shows_no_targets_yet(fake_tk, fake_logger):
     view = RecorderOverlayTk(queue.Queue(), OverlayController(), logger=fake_logger)
     view._show_bar(1, 0)
@@ -473,4 +584,79 @@ def test_set_targets_command_enqueues_data():
     assert item["cmd"] == "set_targets"
     assert item["step"] == 2
     assert len(item["targets"]) == 1
+
+
+def test_request_stop_dialog_enqueues_name():
+    """The overlay queues the save-name dialog command with its default name."""
+    overlay = RecorderOverlay()
+    overlay.request_stop_dialog("my plan")
+    item = overlay._command_queue.get_nowait()
+    assert item["cmd"] == "stop_dialog"
+    assert item["name"] == "my plan"
+
+
+def test_stop_button_opens_dialog_directly(fake_tk, fake_logger):
+    """The overlay Stop button opens the save dialog with the current name."""
+    view = RecorderOverlayTk(queue.Queue(), OverlayController(), logger=fake_logger)
+    view._show_bar(1, 0, name="my plan")
+    view._request_stop()
+    assert view._stop_dialog is not None
+    assert view._stop_entry.get() == "my plan"
+
+
+def test_stop_dialog_save_uses_entered_name(fake_tk, fake_logger):
+    """Clicking Save passes the entered plan name to on_save."""
+    saved = []
+    view = RecorderOverlayTk(
+        queue.Queue(), OverlayController(), on_save=saved.append, logger=fake_logger
+    )
+    view._show_stop_dialog("default name")
+    assert view._stop_entry is not None
+    view._stop_entry._value = "chosen name"
+    view._stop_save_btn.command()
+    assert saved == ["chosen name"]
+    assert view._stop_dialog is None
+
+
+def test_stop_dialog_x_does_not_save(fake_tk, fake_logger):
+    """Clicking X closes the dialog without saving or discarding."""
+    saved = []
+    discarded = []
+    view = RecorderOverlayTk(
+        queue.Queue(),
+        OverlayController(),
+        on_save=saved.append,
+        on_discard=lambda: discarded.append(True),
+        logger=fake_logger,
+    )
+    view._show_stop_dialog("default name")
+    view._stop_x_btn.command()
+    assert saved == []
+    assert discarded == []
+    assert view._stop_dialog is None
+
+
+def test_stop_dialog_dont_save_calls_discard(fake_tk, fake_logger):
+    """Clicking Don't Save discards the recording."""
+    saved = []
+    discarded = []
+    view = RecorderOverlayTk(
+        queue.Queue(),
+        OverlayController(),
+        on_save=saved.append,
+        on_discard=lambda: discarded.append(True),
+        logger=fake_logger,
+    )
+    view._show_stop_dialog("default name")
+    view._stop_discard_btn.command()
+    assert saved == []
+    assert discarded == [True]
+    assert view._stop_dialog is None
+
+
+def test_stop_dialog_prefills_default_name(fake_tk, fake_logger):
+    """The name field is prefilled with the default name."""
+    view = RecorderOverlayTk(queue.Queue(), OverlayController(), logger=fake_logger)
+    view._show_stop_dialog("my plan")
+    assert view._stop_entry.get() == "my plan"
 

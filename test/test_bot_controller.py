@@ -405,6 +405,9 @@ class FakeRecorder:
     def status(self):
         return {
             "state": self.state,
+            "name": self._name,
+            "plan_name": self._plan_name,
+            "editing": self._editing,
             "step_count": len(self.steps),
             "target_count": len(self.current_targets),
             "step_index": self._edit_index + 1,
@@ -426,7 +429,7 @@ class FakeOverlay:
     def stop(self):
         self.calls.append("stop")
 
-    def show_bar(self, step=1, targets=0):
+    def show_bar(self, step=1, targets=0, name=""):
         self.calls.append(("show_bar", step, targets))
 
     def hide_bar(self):
@@ -446,6 +449,9 @@ class FakeOverlay:
 
     def set_targets(self, step, targets):
         self.calls.append(("set_targets", step, len(targets)))
+
+    def request_stop_dialog(self, default_name=""):
+        self.calls.append(("request_stop_dialog", default_name))
 
 
 @pytest.fixture
@@ -740,3 +746,69 @@ class TestRecordingSession:
         result = patched_controller.start_recording(plan_name="missing")
         assert result["ok"] is False
         assert "not found" in result["error"]
+
+    @pytest.mark.positive
+    def test_record_toggle_requests_save_dialog(self, patched_controller):
+        """Stop/F8 while recording asks the overlay for a save-name dialog."""
+        patched_controller.start_recording(name="my flow")
+        patched_controller._on_record_toggle()
+        assert ("request_stop_dialog", "my flow") in patched_controller._overlay.calls
+        assert patched_controller._recorder.state == "RECORDING"
+
+    @pytest.mark.positive
+    def test_save_recording_as_uses_entered_name(self, tmp_plans, patched_controller):
+        """Saving with a custom name creates a plan under that name."""
+        patched_controller.start_recording(name="default")
+        patched_controller._recorder.accept_target(["crop"], "left_click")
+        patched_controller.save_recording_as("chosen")
+        assert bc.get_plan("chosen") is not None
+
+    @pytest.mark.positive
+    def test_discard_recording_writes_nothing(self, tmp_plans, patched_controller):
+        """Don't Save stops the recording without creating a plan file."""
+        patched_controller.start_recording(name="discarded flow")
+        patched_controller._recorder.accept_target(["crop"], "left_click")
+        result = patched_controller.discard_recording()
+        assert result["ok"] is True
+        assert result["discarded"] is True
+        assert patched_controller._recorder.state == "IDLE"
+        assert bc.get_plan("discarded flow") is None
+
+    @pytest.mark.positive
+    def test_save_recording_as_original_name_overwrites(self, tmp_plans, patched_controller):
+        """Saving an edit with the original name overwrites the original plan."""
+        import engine.plan_loader as pl
+
+        pl.save_plan(
+            "existing",
+            {
+                "name": "Existing Plan",
+                "steps": [
+                    {"type": "click", "targets": [{"template": "a.png", "action": "left_click"}]},
+                ],
+            },
+        )
+        patched_controller.start_recording(plan_name="existing")
+        patched_controller._recorder.accept_target(["crop"], "left_click")
+        patched_controller.save_recording_as("existing")
+        saved = pl.get_plan("existing")
+        assert len(saved["steps"][0]["targets"]) == 2
+
+    @pytest.mark.positive
+    def test_save_recording_as_changed_name_creates_copy(self, tmp_plans, patched_controller):
+        """Saving an edit with a different name creates a new plan."""
+        import engine.plan_loader as pl
+
+        pl.save_plan(
+            "existing",
+            {
+                "name": "Existing Plan",
+                "steps": [
+                    {"type": "click", "targets": [{"template": "a.png", "action": "left_click"}]},
+                ],
+            },
+        )
+        patched_controller.start_recording(plan_name="existing")
+        patched_controller._recorder.accept_target(["crop"], "left_click")
+        patched_controller.save_recording_as("existing copy")
+        assert pl.get_plan("existing copy") is not None
