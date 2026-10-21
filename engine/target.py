@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from collections.abc import Callable
 
-from routines.click_action import ClickAction
+from engine.click_action import ClickAction
 
 class Target:
     def __init__(
@@ -38,6 +38,7 @@ class Target:
         self.label = label or os.path.basename(self.templates[0])
 
         self.click_count = 0
+        self.terminal = False
 
     @property
     def template(self) -> str:

@@ -4,12 +4,12 @@ import time
 from typing import Any, Callable
 
 from core.match_result import MatchResult
-from core.screen_bot import get_capture_origin
+from core.screen_bot import get_capture_origin, get_capture_scale
 
-from routines.base import WAIT, RECOVER, match_template, do_click
-from routines.step import Step
-from routines.click_action import ClickAction
-from routines.target import Target
+from engine.base import WAIT, DONE, match_template, do_click
+from engine.step import Step
+from engine.click_action import ClickAction
+from engine.target import Target
 
 
 class ClickStep(Step):
@@ -31,18 +31,23 @@ class ClickStep(Step):
         self.label = label or "step"
 
         self._ready_until = 0.0
-        self._verify_next: Callable[[int, Any], bool] | None = None
-
-    def set_verify_next(self, verifier: Callable[[int, Any], bool] | None) -> None:
-        self._verify_next = verifier
 
     def reset(self) -> None:
         super().reset()
         for rule in self._rules:
             rule.reset()
         self._ready_until = time.time() + self._ready_delay
+        self._clicked_gone = False
+
+    def reset_click_state(self) -> None:
+        super().reset_click_state()
+        for rule in self._rules:
+            rule.reset()
 
     def tick(self, screenshot: Any) -> int:
+        self.lost = False
+        self.confirming = False
+        self._clicked_gone = False
         log = self.logger
         if time.time() < self._ready_until:
             if log:
@@ -51,14 +56,24 @@ class ClickStep(Step):
 
         for rule in self._rules:
             if log:
-                log.info(f"{self.log_prefix()} evaluating target \"{rule.label}\" ({rule.template})")
+                log.info(f'{self.log_prefix()} evaluating target "{rule.label}" ({rule.template})')
             result = self._apply(rule, screenshot)
             if result is not None:
+                if self._clicked_gone:
+                    continue
                 if log:
-                    log.info(f"{self.log_prefix()} target \"{rule.label}\" decided result {result}")
+                    log.info(f'{self.log_prefix()} target "{rule.label}" decided result {result}')
                 return result
             if log:
-                log.info(f"{self.log_prefix()} target \"{rule.label}\" returned None (inconclusive)")
+                log.info(f'{self.log_prefix()} target "{rule.label}" returned None (inconclusive)')
+
+        if self._clicked_gone:
+            if log:
+                log.info(
+                    f'{self.log_prefix()} clicked target gone - '
+                    f"waiting for anchor to locate next step"
+                )
+            return WAIT
 
         if self._goto_step_if_not_found is not None:
             if log:
@@ -87,17 +102,17 @@ class ClickStep(Step):
 
         if m is not None and log:
             log.info(
-                f"{self.log_prefix()} target \"{target.label}\": matched at "
+                f'{self.log_prefix()} target "{target.label}": matched at '
                 f"{m.location[0]},{m.location[1]} conf={m.confidence:.2f}"
             )
         elif m is None and log:
             if len(target.templates) > 1 and missing:
                 log.info(
-                    f"{self.log_prefix()} target \"{target.label}\": NOT found "
+                    f'{self.log_prefix()} target "{target.label}": NOT found '
                     f"(missing {len(missing)} of {len(target.templates)} templates: {', '.join(missing)})"
                 )
             else:
-                log.info(f"{self.log_prefix()} target \"{target.label}\": NOT found")
+                log.info(f'{self.log_prefix()} target "{target.label}": NOT found')
 
         if m is None:
             if (
@@ -106,11 +121,15 @@ class ClickStep(Step):
                 and target.scroll_point is not None
             ):
                 ox, oy = get_capture_origin()
+                scale_x, scale_y = get_capture_scale()
                 sx, sy = target.scroll_point
-                point = (sx + ox, sy + oy)
+                point = (
+                    int(sx * scale_x) + ox,
+                    int(sy * scale_y) + oy,
+                )
                 if log:
                     log.info(
-                        f"{self.log_prefix()} target \"{target.label}\": not found - "
+                        f'{self.log_prefix()} target "{target.label}": not found - '
                         f"scrolling at {point}"
                     )
                 do_click(
@@ -128,58 +147,74 @@ class ClickStep(Step):
                     if log:
                         log.info(f"Blocker {target.label} dismissed")
                     return None
+
                 next_idx = target.goto if target.goto is not None else self.index + 1
-                if self._verify_next is not None and self._verify_next(next_idx, screenshot):
+                if getattr(target, "terminal", False):
                     if log:
                         log.info(
-                            f"{self.log_prefix()} target \"{target.label}\": next step {next_idx} "
-                            "visible - advancing"
+                            f'{self.log_prefix()} target "{target.label}": terminal target gone - finishing'
                         )
-                else:
-                    if log:
-                        log.info(
-                            f"{self.log_prefix()} target \"{target.label}\": current gone, next step "
-                            f"{next_idx} not visible - treating as done (loading), advancing"
-                        )
-                self._fire(target.on_confirm, "on_confirm", target.label)
-                return next_idx
+                    self._fire(target.on_confirm, "on_confirm", target.label)
+                    return DONE
+
+                if log:
+                    log.info(
+                        f'{self.log_prefix()} target "{target.label}": clicked target gone'
+                    )
+                self._clicked_target = target
+                self.lost = True
+                self.confirming = True
+
+                # If the clicked target had an explicit goto, preserve the old
+                # behaviour: stop evaluating this step and let the runner expect
+                # that specific step. Otherwise keep checking later targets in
+                # case one of them can still act on this screen.
+                if target.goto is None:
+                    self._clicked_gone = True
+                    return None
+                return WAIT
+
             return None
 
         if target.action == ClickAction.CONTINUE:
             if log:
                 log.info(f"{self.label}: {target.label} already satisfied, advancing")
+            self._clicked_gone = False
+            self.lost = False
+            self.confirming = False
             self._fire(target.on_match, "on_match", target.label)
             return target.goto if target.goto is not None else self.index + 1
 
         if target.action == ClickAction.SCROLL:
             if log:
                 log.info(f"{self.label}: {target.label} matched after scroll, advancing")
+            self._clicked_gone = False
+            self.lost = False
+            self.confirming = False
             self._fire(target.on_match, "on_match", target.label)
             return target.goto if target.goto is not None else self.index + 1
 
         if target.click_count > 0 and log:
             log.info(
-                f"{self.log_prefix()} target \"{target.label}\": still visible after "
+                f'{self.log_prefix()} target "{target.label}": still visible after '
                 f"{target.click_count} clicks - re-clicking"
             )
 
-        max_step_retry = self.max_step_retry
-        if max_step_retry is not None and target.click_count >= max_step_retry:
-            if log:
-                log.warning(f"Target {target.label} retried {target.click_count}x without transition")
-            return RECOVER
-
+        self._clicked_gone = False
+        self.lost = False
+        self.confirming = False
         time.sleep(self.delay)
         point = self._target_point(m, target)
         post_scroll = 0 if target.scroll_point is not None else target.scrollValue
         do_click(point, ClickAction=target.action, scrollValue=post_scroll, label=target.label, logger=self.logger)
 
         target.click_count += 1
-        self.seek_start_time = 0.0
         if log:
             btn = "Right-clicked" if target.action == ClickAction.RIGHT_CLICK else "Clicked"
             log.info(f"{btn} {target.label} ({target.click_count}) at {point}")
-            log.info(f"{self.log_prefix()} target \"{target.label}\": clicked - returning WAIT, awaiting confirmation")
+            log.info(
+                f'{self.log_prefix()} target "{target.label}": clicked - returning WAIT, awaiting confirmation'
+            )
         self._fire(target.on_match, "on_match", target.label)
 
         return WAIT
@@ -196,6 +231,7 @@ class ClickStep(Step):
     @staticmethod
     def _target_point(m: MatchResult, target: Target) -> tuple[int, int]:
         ox, oy = get_capture_origin()
-        x = m.location[0] + m.size[0] // 2 + target.offset_x + ox
-        y = m.location[1] + m.size[1] // 2 + target.offset_y + oy
+        scale_x, scale_y = get_capture_scale()
+        x = int((m.location[0] + m.size[0] // 2 + target.offset_x) * scale_x) + ox
+        y = int((m.location[1] + m.size[1] // 2 + target.offset_y) * scale_y) + oy
         return (x, y)

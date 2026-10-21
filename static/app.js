@@ -21,17 +21,18 @@ const previewStrip = document.getElementById("preview-strip");
 const stripList = document.getElementById("strip-list");
 const previewEmpty = document.getElementById("preview-empty");
 
-const createRoutineBtn = document.getElementById("create-routine-btn");
-const routineEditorModal = document.getElementById("routine-editor-modal");
-const routineEditorClose = document.getElementById("routine-editor-close");
-const routineEditorTitle = document.getElementById("routine-editor-title");
-const routineNameInput = document.getElementById("routine-name");
-const routineSteps = document.getElementById("routine-steps");
-const routineInterruptSteps = document.getElementById("routine-interrupt-steps");
-const routineEditorError = document.getElementById("routine-editor-error");
+const createPlanBtn = document.getElementById("create-plan-btn");
+const planEditorModal = document.getElementById("plan-editor-modal");
+const planEditorClose = document.getElementById("plan-editor-close");
+const planEditorTitle = document.getElementById("plan-editor-title");
+const planNameInput = document.getElementById("plan-name");
+const planSteps = document.getElementById("plan-steps");
+const planInterruptSteps = document.getElementById("plan-interrupt-steps");
+const planEditorError = document.getElementById("plan-editor-error");
 const addStepBtn = document.getElementById("add-step-btn");
 const addInterruptStepBtn = document.getElementById("add-interrupt-step-btn");
-const routineSaveBtn = document.getElementById("routine-save-btn");
+const planSaveBtn = document.getElementById("plan-save-btn");
+const planContinueRecordBtn = document.getElementById("plan-continue-record-btn");
 const cfgGamePathInput = document.getElementById("cfg-game-path");
 const cfgTabNameInput = document.getElementById("cfg-tab-name");
 const cfgBrowseBtn = document.getElementById("cfg-browse-btn");
@@ -49,27 +50,25 @@ const CONFIG_FIELDS = [
     { id: "cfg-game-path", key: "game_path", type: "string" },
     { id: "cfg-tab-name", key: "tab_name", type: "string" },
     { id: "cfg-delay", key: "delay", type: "float" },
-    { id: "cfg-max-step-retry", key: "max_step_retry", type: "int" },
-    { id: "cfg-timeout", key: "timeout", type: "float" },
-    { id: "cfg-resync-timeout", key: "resync_timeout", type: "float" },
 ];
 
 let ws = null;
 let currentBrowsePath = "";
-let availableRoutines = [];
-let routineLabels = {};
+let availablePlans = [];
+let planLabels = {};
 let currentBrowseCallback = null;
 let activeChain = [];
 let isActive = false;
 let editingFilename = null;
-let routineEditorState = newRoutineState();
+let planEditorState = newPlanState();
 let previewEnabled = false;
 let previewFramePending = false;
 let snapshotRows = new Map();
 let isRecording = false;
 let recordedStepCount = 0;
 let lastRecordPayload = null;
-let currentRunStep = { routine: null, stepIndex: null };
+let recordingPlanName = null;
+let currentRunStep = { plan: null, stepIndex: null };
 
 function connect() {
     const proto = location.protocol === "https:" ? "wss" : "ws";
@@ -158,13 +157,14 @@ function updateState(state) {
     startBtn.disabled = isActive || isRecording;
     stopBtn.disabled = !isActive;
     recordBtn.disabled = isActive;
+    planContinueRecordBtn.disabled = isActive || isRecording || editingFilename === null;
     setControlsEnabled(!isActive);
 
     if (treeSection) {
         treeSection.hidden = !isActive;
     }
     if (!isActive && wasActive) {
-        currentRunStep = { routine: null, stepIndex: null };
+        currentRunStep = { plan: null, stepIndex: null };
         highlightCurrentStep();
     }
 }
@@ -181,11 +181,17 @@ function setControlsEnabled(enabled) {
 function updateRecordingState(data) {
     isRecording = data.state === "RECORDING";
     recordedStepCount = data.step_count || 0;
+    recordingPlanName = data.plan_name || null;
     const stepIndex = data.step_index || 1;
     const targetCount = data.target_count || 0;
-    recordBtn.textContent = isRecording ? `Stop (step ${stepIndex} · ${targetCount}t)` : "Record";
+    let label = isRecording ? `Stop (step ${stepIndex} · ${targetCount}t)` : "Record";
+    if (isRecording && recordingPlanName) {
+        label += ` · ${recordingPlanName}`;
+    }
+    recordBtn.textContent = label;
     recordBtn.classList.toggle("recording", isRecording);
     startBtn.disabled = isRecording || isActive;
+    planContinueRecordBtn.disabled = isActive || isRecording || editingFilename === null;
 
     lastRecordPayload = data;
     populateTreeSourceOptions();
@@ -197,24 +203,43 @@ function updateRecordingState(data) {
     }
 }
 
-async function toggleRecording() {
+async function toggleRecording(planName) {
     if (isRecording) {
-        const res = await fetch("/api/record/stop", { method: "POST" });
+        let saveAs = null;
+        if (recordingPlanName) {
+            const overwrite = confirm(
+                `Overwrite existing plan '${recordingPlanName}'?\n\nOK = overwrite, Cancel = save as copy`
+            );
+            if (!overwrite) {
+                const proposed = `${recordingPlanName} (copy)`;
+                saveAs = prompt("Save recorded plan as:", proposed);
+                if (!saveAs || !saveAs.trim()) {
+                    return;
+                }
+                saveAs = saveAs.trim();
+            }
+        }
+        const res = await fetch("/api/record/stop", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ save_as: saveAs }),
+        });
         const data = await res.json();
         if (data.ok && data.name) {
             appendLog(`Recorded plan '${data.name}' (${data.steps} steps)`);
-            await loadRoutines();
+            await loadPlans();
             treeSource.value = data.name;
             updateTreeView();
-            openRoutineEditor(data.name);
+            openPlanEditor(data.name);
         } else if (data.error) {
             appendLog(`Record stop: ${data.error}`);
         }
     } else {
+        const body = planName ? { plan_name: planName } : {};
         const res = await fetch("/api/record/start", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({}),
+            body: JSON.stringify(body),
         });
         const data = await res.json();
         if (!data.ok && data.error) {
@@ -265,10 +290,10 @@ function populateTreeSourceOptions() {
         treeSource.appendChild(recOpt);
     }
 
-    for (const name of availableRoutines.slice().sort()) {
+    for (const name of availablePlans.slice().sort()) {
         const opt = document.createElement("option");
         opt.value = name;
-        opt.textContent = routineLabels[name] || name;
+        opt.textContent = planLabels[name] || name;
         treeSource.appendChild(opt);
     }
 
@@ -277,8 +302,8 @@ function populateTreeSourceOptions() {
         treeSource.value = current;
     } else if (isRecording) {
         treeSource.value = "__recording__";
-    } else if (availableRoutines.length > 0) {
-        treeSource.value = availableRoutines[0];
+    } else if (availablePlans.length > 0) {
+        treeSource.value = availablePlans[0];
     } else {
         treeSource.value = "";
     }
@@ -306,34 +331,34 @@ async function updateTreeView() {
 }
 
 function updateRunStep(data) {
-    const routine = data.routine || null;
+    const plan = data.plan || null;
     const stepIndex = data.step_index !== undefined ? data.step_index : null;
-    const changed = currentRunStep.routine !== routine;
+    const changed = currentRunStep.plan !== plan;
 
-    currentRunStep = { routine, stepIndex };
+    currentRunStep = { plan, stepIndex };
 
-    if (!isActive || !routine || !availableRoutines.includes(routine)) {
+    if (!isActive || !plan || !availablePlans.includes(plan)) {
         highlightCurrentStep();
         return;
     }
 
     if (changed && !isRecording) {
-        treeSource.value = routine;
+        treeSource.value = plan;
         updateTreeView();
         return;
     }
 
-    if (treeSource.value === routine) {
+    if (treeSource.value === plan) {
         highlightCurrentStep();
     }
 }
 
 function highlightCurrentStep() {
     treeView.querySelectorAll(".tree-current").forEach((el) => el.classList.remove("tree-current"));
-    if (!currentRunStep.routine || currentRunStep.stepIndex === null || currentRunStep.stepIndex === undefined) {
+    if (!currentRunStep.plan || currentRunStep.stepIndex === null || currentRunStep.stepIndex === undefined) {
         return;
     }
-    if (treeSource.value !== currentRunStep.routine) {
+    if (treeSource.value !== currentRunStep.plan) {
         return;
     }
     const node = treeView.querySelector(
@@ -370,9 +395,9 @@ function renderEditorTree() {
         return;
     }
     const plan = {
-        name: routineNameInput.value.trim() || routineEditorState.name || "",
-        steps: routineEditorState.steps,
-        interrupt_steps: routineEditorState.interrupt_steps,
+        name: planNameInput.value.trim() || planEditorState.name || "",
+        steps: planEditorState.steps,
+        interrupt_steps: planEditorState.interrupt_steps,
     };
     renderPlanTree(plan, editorTreeView, { onStepClick: focusEditorStep });
 }
@@ -495,7 +520,7 @@ function makeTreeNode(label, expanded, onLabelClick) {
 }
 
 function focusEditorStep(listKey, idx) {
-    const container = listKey === "interrupt_steps" ? routineInterruptSteps : routineSteps;
+    const container = listKey === "interrupt_steps" ? planInterruptSteps : planSteps;
     const card = container.querySelector(`[data-step-idx="${idx}"]`);
     if (!card) {
         return;
@@ -569,7 +594,7 @@ function updatePreviewView() {
 async function loadConfig() {
     const res = await fetch("/api/config");
     const data = await res.json();
-    activeChain = Array.isArray(data.routines) ? data.routines : [];
+    activeChain = Array.isArray(data.plans) ? data.plans : [];
     if (data.repeat !== undefined) {
         repeatInput.value = String(data.repeat);
     }
@@ -579,11 +604,11 @@ async function loadConfig() {
     renderChain();
 }
 
-async function loadRoutines() {
-    const res = await fetch("/api/routines");
+async function loadPlans() {
+    const res = await fetch("/api/plans");
     const data = await res.json();
-    availableRoutines = data.routines || [];
-    routineLabels = data.labels || {};
+    availablePlans = data.plans || [];
+    planLabels = data.labels || {};
     renderAvailable();
     if (Array.isArray(data.chain)) {
         activeChain = data.chain;
@@ -598,10 +623,10 @@ async function loadRoutines() {
 
 function renderAvailable() {
     availableList.innerHTML = "";
-    for (const name of availableRoutines) {
+    for (const name of availablePlans) {
         const row = document.createElement("div");
         row.className = "chain-item";
-        row.innerHTML = `<span>${escapeHtml(routineLabels[name] ?? name)}</span>`;
+        row.innerHTML = `<span>${escapeHtml(planLabels[name] ?? name)}</span>`;
         const controls = document.createElement("span");
         controls.className = "chain-controls";
 
@@ -613,16 +638,16 @@ function renderAvailable() {
 
         const editBtn = document.createElement("button");
         editBtn.textContent = "Edit";
-        editBtn.title = "Edit routine";
+        editBtn.title = "Edit plan";
         editBtn.disabled = isActive;
-        editBtn.addEventListener("click", () => openRoutineEditor(name));
+        editBtn.addEventListener("click", () => openPlanEditor(name));
 
         const deleteBtn = document.createElement("button");
         deleteBtn.textContent = "Delete";
-        deleteBtn.title = "Delete routine";
+        deleteBtn.title = "Delete plan";
         deleteBtn.className = "icon-danger";
         deleteBtn.disabled = isActive;
-        deleteBtn.addEventListener("click", () => deleteRoutine(name));
+        deleteBtn.addEventListener("click", () => deletePlan(name));
 
         controls.appendChild(addBtn);
         controls.appendChild(editBtn);
@@ -637,7 +662,7 @@ function renderChain() {
     activeChain.forEach((name, idx) => {
         const row = document.createElement("div");
         row.className = "chain-item";
-        row.innerHTML = `<span>${idx + 1}. ${escapeHtml(routineLabels[name] ?? name)}</span>`;
+        row.innerHTML = `<span>${idx + 1}. ${escapeHtml(planLabels[name] ?? name)}</span>`;
         const controls = document.createElement("span");
         controls.className = "chain-controls";
 
@@ -695,7 +720,7 @@ async function saveConfig() {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-            routines: activeChain,
+            plans: activeChain,
             repeat: repeat,
             check_interval: intervalMs / 1000,
         }),
@@ -819,7 +844,7 @@ function escapeHtml(str) {
     return div.innerHTML;
 }
 
-function newRoutineState() {
+function newPlanState() {
     return {
         name: "",
         config: { game_path: "", tab_name: "", delay: 0.5 },
@@ -850,7 +875,7 @@ function newClickTarget() {
     };
 }
 
-async function openRoutineEditor(name) {
+async function openPlanEditor(name) {
     if (name) {
         const res = await fetch(`/api/plan/${encodeURIComponent(name)}`);
         if (!res.ok) {
@@ -858,52 +883,65 @@ async function openRoutineEditor(name) {
             appendLog(`Failed to load plan ${name}: ${data.error || res.statusText}`);
             return;
         }
-        routineEditorState = await res.json();
+        planEditorState = await res.json();
         editingFilename = name;
-        if (!routineEditorState.config) {
-            routineEditorState.config = newRoutineState().config;
+        if (!planEditorState.config) {
+            planEditorState.config = newPlanState().config;
         }
-        if (!Array.isArray(routineEditorState.steps)) {
-            routineEditorState.steps = [];
+        if (!Array.isArray(planEditorState.steps)) {
+            planEditorState.steps = [];
         }
-        if (!Array.isArray(routineEditorState.interrupt_steps)) {
-            routineEditorState.interrupt_steps = [];
+        if (!Array.isArray(planEditorState.interrupt_steps)) {
+            planEditorState.interrupt_steps = [];
         }
-        routineEditorTitle.textContent = "Edit Routine";
+        planEditorTitle.textContent = "Edit Plan";
     } else {
-        routineEditorState = newRoutineState();
-        routineEditorState.steps = [newClickStep()];
+        planEditorState = newPlanState();
+        planEditorState.steps = [newClickStep()];
         editingFilename = null;
-        routineEditorTitle.textContent = "Create Routine";
+        planEditorTitle.textContent = "Create Plan";
     }
-    routineNameInput.value = routineEditorState.name || "";
-    loadRoutineConfig();
-    renderRoutineSteps();
-    renderRoutineInterruptSteps();
-    hideRoutineError();
-    routineEditorModal.classList.remove("hidden");
+    planNameInput.value = planEditorState.name || "";
+    loadPlanConfig();
+    renderPlanSteps();
+    renderPlanInterruptSteps();
+    hidePlanError();
+    planContinueRecordBtn.hidden = editingFilename === null;
+    planContinueRecordBtn.disabled = isActive || isRecording;
+    planEditorModal.classList.remove("hidden");
     planTreeModal.classList.remove("hidden");
     renderEditorTree();
 }
 
-function closeRoutineEditor() {
-    routineEditorModal.classList.add("hidden");
+function closePlanEditor() {
+    planEditorModal.classList.add("hidden");
     planTreeModal.classList.add("hidden");
-    routineEditorState = newRoutineState();
+    planContinueRecordBtn.hidden = true;
+    planEditorState = newPlanState();
     editingFilename = null;
 }
 
-function loadRoutineConfig() {
+function continueRecordingFromEditor() {
+    if (!editingFilename || isRecording || isActive) return;
+    if (!confirm("Continue recording will use the saved plan and discard unsaved editor changes. Continue?")) {
+        return;
+    }
+    const planName = editingFilename;
+    closePlanEditor();
+    toggleRecording(planName);
+}
+
+function loadPlanConfig() {
     for (const field of CONFIG_FIELDS) {
         const el = document.getElementById(field.id);
-        const val = routineEditorState.config[field.key];
+        const val = planEditorState.config[field.key];
         el.value = val !== undefined && val !== null ? String(val) : "";
     }
 }
 
 cfgTabNameInput.addEventListener("focus", refreshWindowSuggestions);
 
-function readRoutineConfig() {
+function readPlanConfig() {
     const cfg = {};
     for (const field of CONFIG_FIELDS) {
         const el = document.getElementById(field.id);
@@ -924,17 +962,17 @@ function readRoutineConfig() {
     return cfg;
 }
 
-function renderRoutineSteps() {
-    routineSteps.innerHTML = "";
-    routineEditorState.steps.forEach((step, idx) => {
-        routineSteps.appendChild(renderStepCard(step, idx, "steps"));
+function renderPlanSteps() {
+    planSteps.innerHTML = "";
+    planEditorState.steps.forEach((step, idx) => {
+        planSteps.appendChild(renderStepCard(step, idx, "steps"));
     });
 }
 
-function renderRoutineInterruptSteps() {
-    routineInterruptSteps.innerHTML = "";
-    routineEditorState.interrupt_steps.forEach((step, idx) => {
-        routineInterruptSteps.appendChild(renderStepCard(step, idx, "interrupt_steps"));
+function renderPlanInterruptSteps() {
+    planInterruptSteps.innerHTML = "";
+    planEditorState.interrupt_steps.forEach((step, idx) => {
+        planInterruptSteps.appendChild(renderStepCard(step, idx, "interrupt_steps"));
     });
 }
 
@@ -955,7 +993,7 @@ function renderStepCard(step, idx, listKey) {
 
     const downBtn = document.createElement("button");
     downBtn.textContent = "v";
-    downBtn.disabled = idx === routineEditorState[listKey].length - 1;
+    downBtn.disabled = idx === planEditorState[listKey].length - 1;
     downBtn.addEventListener("click", () => moveStep(listKey, idx, 1));
 
     const removeBtn = document.createElement("button");
@@ -1062,8 +1100,8 @@ function findDuplicateTemplateStep(target, excludeListKey, excludeStepIdx) {
     const paths = new Set(targetTemplates(target).filter((p) => p));
     if (paths.size === 0) return null;
     const lists = [
-        ["steps", routineEditorState.steps || []],
-        ["interrupt_steps", routineEditorState.interrupt_steps || []],
+        ["steps", planEditorState.steps || []],
+        ["interrupt_steps", planEditorState.interrupt_steps || []],
     ];
     for (const [lk, steps] of lists) {
         for (let i = 0; i < steps.length; i++) {
@@ -1329,7 +1367,7 @@ function makeMiniNumberInput(value, setter, nullable = false) {
 }
 
 function moveStep(listKey, idx, delta) {
-    const arr = routineEditorState[listKey];
+    const arr = planEditorState[listKey];
     const newIdx = idx + delta;
     if (newIdx < 0 || newIdx >= arr.length) return;
     const temp = arr[idx];
@@ -1339,43 +1377,43 @@ function moveStep(listKey, idx, delta) {
 }
 
 function removeStep(listKey, idx) {
-    routineEditorState[listKey].splice(idx, 1);
+    planEditorState[listKey].splice(idx, 1);
     refreshEditor();
 }
 
 function refreshEditor() {
-    routineEditorState.config = readRoutineConfig();
-    routineEditorState.name = routineNameInput.value.trim();
-    renderRoutineSteps();
-    renderRoutineInterruptSteps();
+    planEditorState.config = readPlanConfig();
+    planEditorState.name = planNameInput.value.trim();
+    renderPlanSteps();
+    renderPlanInterruptSteps();
     renderEditorTree();
 }
 
-function showRoutineError(msg) {
-    routineEditorError.textContent = msg;
-    routineEditorError.classList.remove("hidden");
+function showPlanError(msg) {
+    planEditorError.textContent = msg;
+    planEditorError.classList.remove("hidden");
 }
 
-function hideRoutineError() {
-    routineEditorError.textContent = "";
-    routineEditorError.classList.add("hidden");
+function hidePlanError() {
+    planEditorError.textContent = "";
+    planEditorError.classList.add("hidden");
 }
 
-async function saveRoutine() {
-    routineEditorState.name = routineNameInput.value.trim();
-    routineEditorState.config = readRoutineConfig();
-    if (!routineEditorState.name) {
-        showRoutineError("Routine name is required.");
+async function savePlan() {
+    planEditorState.name = planNameInput.value.trim();
+    planEditorState.config = readPlanConfig();
+    if (!planEditorState.name) {
+        showPlanError("Plan name is required.");
         return;
     }
 
     const body = {
-        name: routineEditorState.name,
-        config: routineEditorState.config,
-        steps: routineEditorState.steps,
+        name: planEditorState.name,
+        config: planEditorState.config,
+        steps: planEditorState.steps,
     };
-    if (routineEditorState.interrupt_steps && routineEditorState.interrupt_steps.length) {
-        body.interrupt_steps = routineEditorState.interrupt_steps;
+    if (planEditorState.interrupt_steps && planEditorState.interrupt_steps.length) {
+        body.interrupt_steps = planEditorState.interrupt_steps;
     }
 
     const isEdit = editingFilename !== null;
@@ -1390,54 +1428,55 @@ async function saveRoutine() {
     });
     const data = await res.json();
     if (!res.ok) {
-        showRoutineError(data.error || "Save failed");
+        showPlanError(data.error || "Save failed");
         return;
     }
-    appendLog(`Saved routine '${data.name}'`);
-    closeRoutineEditor();
-    loadRoutines();
+    appendLog(`Saved plan '${data.name}'`);
+    closePlanEditor();
+    loadPlans();
 }
 
-async function deleteRoutine(name) {
-    if (!confirm(`Delete routine '${name}'?`)) return;
+async function deletePlan(name) {
+    if (!confirm(`Delete plan '${name}'?`)) return;
     const res = await fetch(`/api/plan/${encodeURIComponent(name)}`, { method: "DELETE" });
     const data = await res.json();
     if (!res.ok) {
-        appendLog(`Failed to delete routine '${name}': ${data.error || res.statusText}`);
+        appendLog(`Failed to delete plan '${name}': ${data.error || res.statusText}`);
         return;
     }
-    appendLog(`Deleted routine '${name}'`);
+    appendLog(`Deleted plan '${name}'`);
     if (activeChain.includes(name)) {
         activeChain = activeChain.filter((n) => n !== name);
         renderChain();
         saveConfig();
     }
-    loadRoutines();
+    loadPlans();
 }
 
-createRoutineBtn.addEventListener("click", () => openRoutineEditor(null));
-routineEditorClose.addEventListener("click", closeRoutineEditor);
-routineSaveBtn.addEventListener("click", saveRoutine);
-routineNameInput.addEventListener("input", renderEditorTree);
+createPlanBtn.addEventListener("click", () => openPlanEditor(null));
+planEditorClose.addEventListener("click", closePlanEditor);
+planSaveBtn.addEventListener("click", savePlan);
+planContinueRecordBtn.addEventListener("click", continueRecordingFromEditor);
+planNameInput.addEventListener("input", renderEditorTree);
 planTreeClose.addEventListener("click", () => planTreeModal.classList.add("hidden"));
 addStepBtn.addEventListener("click", () => {
-    routineEditorState.steps.push(newClickStep());
+    planEditorState.steps.push(newClickStep());
     refreshEditor();
 });
 addInterruptStepBtn.addEventListener("click", () => {
-    routineEditorState.interrupt_steps.push(newClickStep());
+    planEditorState.interrupt_steps.push(newClickStep());
     refreshEditor();
 });
-routineEditorModal.addEventListener("click", (e) => {
-    if (e.target === routineEditorModal) closeRoutineEditor();
+planEditorModal.addEventListener("click", (e) => {
+    if (e.target === planEditorModal) closePlanEditor();
 });
 
-recordBtn.addEventListener("click", toggleRecording);
+recordBtn.addEventListener("click", () => toggleRecording());
 treeSource.addEventListener("change", updateTreeView);
 
 connect();
 loadConfig();
-loadRoutines();
+loadPlans();
 fetchState();
 loadPreviewState();
 loadRecordingState();

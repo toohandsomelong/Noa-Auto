@@ -6,13 +6,12 @@ import pyautogui
 
 from core.match_result import MatchResult
 from core.screen_bot import _load_template, _match
-from routines.click_action import ClickAction
-from routines.step_status import StepStatus
+from engine.click_action import ClickAction
+from engine.step_status import StepStatus
 
 
 WAIT = StepStatus.WAIT
 DONE = StepStatus.DONE
-RECOVER = StepStatus.RECOVER
 
 
 def match_template(

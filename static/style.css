@@ -438,7 +438,7 @@ button:disabled {
     border-bottom: 1px solid #444;
 }
 
-#routine-editor-close,
+#plan-editor-close,
 #browse-close {
     border: none;
     background: none;

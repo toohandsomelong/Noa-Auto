@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-"""Smoke test for ClickStep / Routine logic -- no game, no templates.
+"""Smoke test for ClickStep / PlanRunner logic -- no game, no templates.
 
 ``match_template`` is simulated via a ``visible`` set of template basenames,
 so each scenario controls exactly which templates the bot sees on screen.
@@ -11,21 +11,20 @@ Run from anywhere:
 
 import os
 import sys
-import time
 from collections.abc import Callable
 
 import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import routines.base as base_mod
-import routines.click_step as cs_mod
-import routines.routine as routine_mod
+import engine.base as base_mod
+import engine.click_step as cs_mod
+import engine.plan_runner as plan_runner_mod
 from core.match_result import MatchResult
-from routines.click_step import ClickStep
-from routines.config import RoutineConfig
-from routines.routine import Routine
-from routines.target import Target
+from engine.click_step import ClickStep
+from engine.config import PlanConfig
+from engine.plan_runner import PlanRunner
+from engine.target import Target
 
 
 class FakeLogger:
@@ -64,12 +63,35 @@ def fake_click(*args: object, **kwargs: object) -> bool:
     return True
 
 
+class FakeClock:
+    def __init__(self) -> None:
+        self.now = 0.0
+
+    def time(self) -> float:
+        return self.now
+
+    def monotonic(self) -> float:
+        return self.now
+
+    def sleep(self, seconds: float) -> None:
+        self.now += max(0.0, seconds)
+
+
+CLOCK = FakeClock()
+
+
 def _apply_patches(set_attr: Callable[..., None]) -> None:
     set_attr(cs_mod, "match_template", fake_match)
     set_attr(cs_mod, "do_click", fake_click)
     set_attr(base_mod, "match_template", fake_match)
     set_attr(base_mod, "do_click", fake_click)
-    set_attr(routine_mod, "match_template", fake_match)
+    set_attr(plan_runner_mod, "match_template", fake_match)
+    set_attr(plan_runner_mod, "time", CLOCK)
+
+
+def expire_search_delay() -> None:
+    """Advance the fake clock past SEARCH_DELAY so the general scan is allowed."""
+    CLOCK.now += plan_runner_mod.SEARCH_DELAY + 0.1
 
 
 @pytest.fixture(autouse=True)
@@ -88,31 +110,22 @@ def make_steps() -> list[ClickStep]:
     ]
 
 
-def make_routine(
+def make_runner(
     steps: list[ClickStep] | None = None,
     interrupts: list[ClickStep] | None = None,
-    *,
-    max_step_retry: int = 4,
-    timeout: float | None = None,
-    resync_timeout: float | None = None,
-) -> Routine:
-    return Routine(
+) -> PlanRunner:
+    return PlanRunner(
         "smoke",
         steps if steps is not None else make_steps(),
         logger=LOG,
-        config=RoutineConfig(
-            delay=0.0,
-            max_step_retry=max_step_retry,
-            timeout=timeout,
-            resync_timeout=resync_timeout,
-        ),
+        config=PlanConfig(delay=0.0),
         interrupt_steps=interrupts,
     )
 
 
-def tick(routine: Routine, times: int = 1) -> None:
+def tick(plan: PlanRunner, times: int = 1) -> None:
     for _ in range(times):
-        routine.tick(None)
+        plan.tick(None)
 
 
 def reset_visible(*names: str) -> None:
@@ -122,254 +135,246 @@ def reset_visible(*names: str) -> None:
 
 def scenario_a_retries_while_matched() -> None:
     print("A: current template stays on screen -> keeps re-clicking (count grows)")
-    routine = make_routine()
+    plan = make_runner()
     clicks.clear()
     reset_visible("B.png", "C.png", "D.png")
-    tick(routine, 3)
-    target = routine.steps[0]._rules[0]
+    tick(plan, 3)
+    target = plan.steps[0]._rules[0]
     assert len(clicks) == 3, f"expected 3 clicks, got {len(clicks)}"
     assert target.click_count == 3, f"expected count 3, got {target.click_count}"
-    assert routine._index == 0, f"expected to stay at step 0, got {routine._index}"
+    assert plan._index == 0, f"expected to stay at step 0, got {plan._index}"
     print("    PASS: re-clicks every tick while template is found")
 
 
-def scenario_b_max_step_then_resync_no_abort() -> None:
-    print("B: template always matched -> max retry -> RECOVER -> resync (never aborts)")
-    routine = make_routine()
-    clicks.clear()
-    reset_visible("B.png", "C.png", "D.png")  # B stays visible, click never registers
-    tick(routine, 8)
-    assert not routine.aborted, "expected routine to never abort"
-    assert not routine.done, "expected routine to keep running after resync"
-    print("    PASS: max-step RECOVER enters resync; routine keeps going instead of aborting")
-
-
-def scenario_c_transition_advances() -> None:
-    print("C: real transition (current gone, next step visible) -> verifies & advances")
-    routine = make_routine()
+def scenario_c_transition_anchors() -> None:
+    print("C: real transition (current gone, next step visible 2 frames) -> anchors & advances")
+    plan = make_runner()
     clicks.clear()
     reset_visible("B.png")
-    tick(routine, 1)  # B clicked
+    tick(plan, 1)  # B clicked
     reset_visible("C.png")  # screen moved to C
-    tick(routine, 1)  # confirm -> verify next step (C) visible -> advance
-    assert routine._index == 1, f"expected index 1, got {routine._index}"
+    tick(plan, 2)  # anchor sees C, debounces, then jumps
+    assert plan._index == 1, f"expected index 1, got {plan._index}"
     print("    PASS: advanced to step 1 only after next screen was confirmed visible")
 
 
-def scenario_d_loading_advances() -> None:
-    print("D: current gone + next NOT visible (loading/transition) -> advances anyway")
-    routine = make_routine()
+def scenario_d_loading_waits_then_anchors() -> None:
+    print("D: current gone + next NOT visible (loading) -> waits, then anchors when next appears")
+    plan = make_runner()
     clicks.clear()
     reset_visible("B.png")
-    tick(routine, 1)  # B clicked, count=1
-    visible.clear()  # B gone AND C (next) gone -- game is transitioning/loading
-    tick(routine, 1)  # confirm -> current done, next not visible -> advance (rule 3)
-    assert routine._index == 1, f"expected idx 1 (loading advance), got {routine._index}"
-    print("    PASS: advanced on 'both gone' = screen transitioning")
+    tick(plan, 1)  # B clicked
+    visible.clear()  # loading / transition -- nothing known visible
+    tick(plan, 3)
+    assert plan._index == 0, f"expected still at step 0 while loading, got {plan._index}"
+    reset_visible("C.png")
+    tick(plan, 2)  # anchor debounce
+    assert plan._index == 1, f"expected idx 1 after loading, got {plan._index}"
+    print("    PASS: waited through loading, then anchored to next step")
 
 
 def scenario_d2_reclick_when_current_returns() -> None:
     print("D2: current template still visible after click (click failed) -> re-click, no advance")
-    routine = make_routine()
+    plan = make_runner()
     clicks.clear()
     reset_visible("B.png")
-    tick(routine, 1)  # B clicked, count=1
-    tick(routine, 1)
-    tick(routine, 1)
-    target = routine.steps[0]._rules[0]
-    assert routine._index == 0, f"expected still step 0, got {routine._index}"
+    tick(plan, 1)  # B clicked, count=1
+    tick(plan, 1)
+    tick(plan, 1)
+    target = plan.steps[0]._rules[0]
+    assert plan._index == 0, f"expected still step 0, got {plan._index}"
     assert target.click_count == 3, f"expected re-click (count 3), got {target.click_count}"
     print("    PASS: kept re-clicking while current template stayed visible")
 
 
 def scenario_e_last_step_still_finishes() -> None:
-    print("E: confirming on the LAST step (next out of range) still finishes the routine")
+    print("E: confirming on the LAST step (terminal target gone) finishes the plan immediately")
     steps = [ClickStep([Target("templates/x/B.png")])]
-    routine = Routine(
+    plan = PlanRunner(
         "last",
         steps,
         logger=LOG,
-        config=RoutineConfig(delay=0.0, max_step_retry=4, timeout=None),
+        config=PlanConfig(delay=0.0),
     )
     clicks.clear()
     reset_visible("B.png")
-    tick(routine, 1)  # clicked
-    visible.clear()  # gone -> next idx out of range -> verify allows -> advance
-    tick(routine, 1)
-    tick(routine, 1)  # idx now out of range -> routine done
-    assert routine.done, f"expected routine done, got done={routine.done} idx={routine._index}"
-    print("    PASS: routine ended cleanly on the last step")
+    tick(plan, 1)  # clicked
+    visible.clear()  # gone -> terminal target -> DONE
+    tick(plan, 1)
+    assert plan.done, f"expected plan done, got done={plan.done} idx={plan._index}"
+    print("    PASS: plan ended cleanly on the last step")
 
 
-def _drive_to_step(routine: Routine, idx: int) -> None:
-    """Walk the routine forward to ``idx`` by showing each step's screen."""
+def _drive_to_step(plan: PlanRunner, idx: int) -> None:
+    """Walk the plan forward to ``idx`` by showing each step's screen."""
     names = {0: "B.png", 1: "C.png", 2: "D.png"}
     for i in range(idx):
         reset_visible(names[i])
-        tick(routine, 1)  # click step i
+        tick(plan, 1)  # click step i
         reset_visible(names[i + 1])
-        tick(routine, 1)  # confirm -> advance to i + 1
-    assert routine._index == idx, f"expected to reach step {idx}, got {routine._index}"
+        tick(plan, 2)  # anchor debounce -> advance to i + 1
+    assert plan._index == idx, f"expected to reach step {idx}, got {plan._index}"
 
 
-def scenario_f_resync_to_visible_step() -> None:
-    print("F: stuck at step 2, step 1 screen visible -> resync resumes from step 1")
-    routine = make_routine()
+def scenario_f_anchor_to_visible_step() -> None:
+    print("F: stuck at step 2, step 1 screen visible -> anchor resumes from step 1")
+    plan = make_runner()
     clicks.clear()
-    _drive_to_step(routine, 2)
-    reset_visible("D.png")
-    tick(routine, 5)  # step 2 clicks 4x, then RECOVER while D is still on screen
-    assert routine._resync_pending, "expected routine to be resync-pending after RECOVER"
+    _drive_to_step(plan, 2)
     reset_visible("C.png")  # game actually shows step 1's screen
-    tick(routine, 1)  # candidate seen 1/2 -- debounce, do not commit yet
-    assert routine._resync_pending, "expected debounce to delay the resume by one tick"
-    tick(routine, 1)  # candidate seen 2/2 -> commit
-    assert routine._index == 1, f"expected resync to step 1, got {routine._index}"
-    assert not routine.done and not routine.aborted, "expected routine to keep running after resync"
-    print("    PASS: debounced resync resumed at step 1")
+    tick(plan, 1)  # lost -> search delay starts
+    expire_search_delay()
+    tick(plan, 2)  # general scan -> anchor
+    assert plan._index == 1, f"expected anchor to step 1, got {plan._index}"
+    assert not plan.done, "expected plan to keep running after anchor"
+    print("    PASS: proactive anchor resumed at step 1")
 
 
-def scenario_g_unknown_screen_never_aborts() -> None:
-    print("G: nothing visible during resync -> polls forever (no abort)")
-    routine = make_routine()
+def scenario_g_unknown_screen_stays_lost() -> None:
+    print("G: nothing visible after click -> stays lost (no abort, no timeout)")
+    plan = make_runner()
     clicks.clear()
     reset_visible("B.png")
-    tick(routine, 5)  # step 0 clicks 4x, then RECOVER
-    assert routine._resync_pending, "expected routine to be resync-pending after RECOVER"
-    visible.clear()  # unknown screen - no step matches
-    tick(routine, 20)
-    assert routine._resync_pending and not routine.done and not routine.aborted, (
-        f"expected to stay pending, got pending={routine._resync_pending} "
-        f"done={routine.done} aborted={routine.aborted}"
-    )
-    print("    PASS: unknown screen keeps polling, never aborts")
-
-
-def scenario_h_resync_timeout_aborts() -> None:
-    print("H: resync_timeout set -> no known step within the deadline -> aborts (escape hatch)")
-    routine = make_routine(resync_timeout=0.01)
-    clicks.clear()
-    reset_visible("B.png")
-    tick(routine, 5)  # RECOVER -> resync with a 10ms deadline
-    visible.clear()
-    time.sleep(0.02)
-    tick(routine, 1)
-    assert routine.aborted and routine.done, (
-        f"expected abort, got aborted={routine.aborted} done={routine.done}"
-    )
-    print("    PASS: configured resync_timeout still aborts")
+    tick(plan, 1)  # click B
+    visible.clear()  # unknown screen
+    tick(plan, 20)
+    assert plan._index == 0, f"expected to stay at step 0, got {plan._index}"
+    assert not plan.done, "expected plan to keep scanning"
+    print("    PASS: unknown screen keeps scanning, never aborts")
 
 
 def scenario_i_interrupt_dismissed_without_advancing() -> None:
     print("I: blocker visible -> interrupt clicks it, current step does not advance")
     interrupt = ClickStep([Target("templates/x/HALT.png")], label="halt")
-    routine = make_routine(interrupts=[interrupt])
+    plan = make_runner(interrupts=[interrupt])
     clicks.clear()
     reset_visible("HALT.png", "B.png")  # blocker covers the step-0 screen
-    tick(routine, 1)
+    tick(plan, 1)
     assert clicks == ["HALT.png"], f"expected blocker click, got {clicks}"
-    assert routine._index == 0, f"expected to stay at step 0, got {routine._index}"
-    assert routine.steps[0]._rules[0].click_count == 0, "step target must not be clicked while blocked"
+    assert plan._index == 0, f"expected to stay at step 0, got {plan._index}"
+    assert plan.steps[0]._rules[0].click_count == 0, "step target must not be clicked while blocked"
     reset_visible("B.png")  # blocker gone
-    tick(routine, 1)
+    tick(plan, 1)
     assert clicks == ["HALT.png", "B.png"], f"expected step to resume after blocker gone, got {clicks}"
-    assert routine._index == 0, f"expected still at step 0, got {routine._index}"
+    assert plan._index == 0, f"expected still at step 0, got {plan._index}"
     print("    PASS: interrupt dismissed the blocker, then the step proceeded normally")
 
 
 def scenario_j_interrupt_overlap_guard() -> None:
     print("J: interrupt template equal to current step target is NOT dismissed")
     interrupt = ClickStep([Target("templates/x/B.png")], label="guard")
-    routine = make_routine(interrupts=[interrupt])
+    plan = make_runner(interrupts=[interrupt])
     clicks.clear()
     reset_visible("B.png")
-    tick(routine, 1)
-    assert routine.steps[0]._rules[0].click_count == 1, "current step should own the click"
+    tick(plan, 1)
+    assert plan.steps[0]._rules[0].click_count == 1, "current step should own the click"
     assert interrupt._rules[0].click_count == 0, "interrupt must be skipped on template overlap"
     print("    PASS: overlapping interrupt skipped; current step acted")
 
 
 def scenario_k_forward_successor_preferred() -> None:
-    print("K: resync prefers the forward successor over the origin")
-    routine = make_routine()
+    print("K: anchor prefers the forward successor over the origin")
+    steps = [
+        ClickStep([Target("templates/x/B.png")]),  # 0
+        ClickStep([Target("templates/x/C.png")]),  # 1
+        ClickStep([Target("templates/x/D.png")]),  # 2 (forward, non-terminal)
+        ClickStep([Target("templates/x/E.png")]),  # 3
+    ]
+    plan = PlanRunner("smoke", steps, logger=LOG, config=PlanConfig(delay=0.0))
     clicks.clear()
-    _drive_to_step(routine, 1)
+    reset_visible("B.png")
+    tick(plan, 1)  # click B
     reset_visible("C.png")
-    tick(routine, 5)  # step 1 RECOVER
+    tick(plan, 2)  # anchor -> step 1
+    assert plan._index == 1, f"expected step 1, got {plan._index}"
     reset_visible("D.png")  # origin+1 is visible
-    tick(routine, 2)  # debounce -> commit
-    assert routine._index == 2, f"expected forward successor step 2, got {routine._index}"
+    tick(plan, 2)
+    assert plan._index == 2, f"expected forward successor step 2, got {plan._index}"
     print("    PASS: forward successor chosen over origin")
+
+
+def scenario_r_terminal_step_not_an_anchor() -> None:
+    print("R: a visible terminal step (Home button) never anchors a lost step")
+    plan = make_runner()
+    clicks.clear()
+    reset_visible("B.png")
+    tick(plan, 1)  # click B
+    reset_visible("D.png")  # only the terminal last step is visible
+    tick(plan, 10)
+    assert plan._index == 0, f"expected to stay at step 0, got {plan._index}"
+    assert not plan.done, "terminal step must not finish the plan while lost"
+    print("    PASS: terminal step ignored while seeking")
 
 
 def scenario_l_origin_is_last_resort() -> None:
     print("L: only the origin screen is visible -> resume on the origin (last resort)")
-    routine = make_routine()
+    plan = make_runner()
     clicks.clear()
-    _drive_to_step(routine, 1)
-    reset_visible("C.png")
-    tick(routine, 5)  # step 1 RECOVER (C still visible)
-    tick(routine, 2)  # debounce -> commit on origin
-    assert routine._index == 1, f"expected origin step 1, got {routine._index}"
-    print("    PASS: origin used only when nothing else matches")
+    _drive_to_step(plan, 2)
+    reset_visible("C.png")  # only an earlier step is visible
+    tick(plan, 1)  # lost -> search delay starts
+    expire_search_delay()
+    tick(plan, 2)  # general scan -> commit
+    assert plan._index == 1, f"expected origin step 1, got {plan._index}"
+    print("    PASS: earlier step used only when nothing else matches")
 
 
-def scenario_m_non_origin_preferred_when_origin_visible() -> None:
-    print("M: origin and an earlier step both visible -> non-origin wins")
-    routine = make_routine()
+def scenario_m_non_origin_preferred() -> None:
+    print("M: an earlier step is visible while origin is not -> earlier step wins")
+    plan = make_runner()
     clicks.clear()
-    _drive_to_step(routine, 1)
-    reset_visible("C.png")
-    tick(routine, 5)  # step 1 RECOVER
-    reset_visible("B.png", "C.png")  # origin (C) and step 0 (B) both visible
-    tick(routine, 2)  # debounce -> commit
-    assert routine._index == 0, f"expected step 0 over origin, got {routine._index}"
-    print("    PASS: non-origin candidate preferred even though origin is visible")
+    _drive_to_step(plan, 2)
+    reset_visible("B.png")  # earlier step 0 visible
+    tick(plan, 1)  # lost -> search delay starts
+    expire_search_delay()
+    tick(plan, 2)  # general scan -> commit
+    assert plan._index == 0, f"expected step 0 over origin, got {plan._index}"
+    print("    PASS: earlier candidate preferred")
 
 
 def scenario_n_and_target_requires_all_templates() -> None:
     print("N: AND target only clicks when all its templates are visible")
     and_target = Target(["templates/x/A1.png", "templates/x/A2.png"])
-    routine = make_routine(steps=[ClickStep([and_target]), ClickStep([Target("templates/x/C.png")])])
+    plan = make_runner(steps=[ClickStep([and_target]), ClickStep([Target("templates/x/C.png")])])
     clicks.clear()
     reset_visible("A1.png")
-    tick(routine, 2)
+    tick(plan, 2)
     assert len(clicks) == 0, f"expected no clicks with only A1 visible, got {clicks}"
     reset_visible("A1.png", "A2.png")
-    tick(routine, 1)
+    tick(plan, 1)
     assert clicks == ["A1.png"], f"expected click on first template, got {clicks}"
-    assert routine.steps[0]._rules[0].click_count == 1
+    assert plan.steps[0]._rules[0].click_count == 1
     print("    PASS: AND target clicked only after every template appeared")
 
 
-def scenario_o_and_target_confirms_when_any_template_gone() -> None:
-    print("O: AND target advances as soon as any template disappears after click")
+def scenario_o_and_target_waits_for_next_screen() -> None:
+    print("O: AND target waits for the next step screen after one template disappears")
     and_target = Target(["templates/x/A1.png", "templates/x/A2.png"])
-    routine = make_routine(steps=[ClickStep([and_target]), ClickStep([Target("templates/x/C.png")])])
+    plan = make_runner(steps=[ClickStep([and_target]), ClickStep([Target("templates/x/C.png")])])
     clicks.clear()
     reset_visible("A1.png", "A2.png")
-    tick(routine, 1)  # click
-    reset_visible("A1.png")  # A2 gone -> confirm -> advance
-    tick(routine, 1)
-    assert routine._index == 1, f"expected advance to step 1, got {routine._index}"
-    print("    PASS: AND target advanced when one template disappeared")
+    tick(plan, 1)  # click
+    reset_visible("A1.png", "C.png")  # A2 gone, next step visible
+    tick(plan, 2)  # anchor debounce -> advance
+    assert plan._index == 1, f"expected advance to step 1, got {plan._index}"
+    print("    PASS: AND target advanced after next screen appeared")
 
 
 def scenario_p_interrupt_overlap_guard_multi_template() -> None:
     print("P: multi-template interrupt sharing a template with current step is skipped")
     interrupt = ClickStep([Target(["templates/x/B.png", "templates/x/Z.png"])], label="guard-multi")
-    routine = make_routine(interrupts=[interrupt])
+    plan = make_runner(interrupts=[interrupt])
     clicks.clear()
     reset_visible("B.png", "Z.png")
-    tick(routine, 1)
-    assert routine.steps[0]._rules[0].click_count == 1, "current step should own the click"
+    tick(plan, 1)
+    assert plan.steps[0]._rules[0].click_count == 1, "current step should own the click"
     assert interrupt._rules[0].click_count == 0, "overlapping interrupt must be skipped"
     print("    PASS: multi-template interrupt skipped on template overlap")
 
 
 def scenario_q_plan_loader_accepts_list_template() -> None:
     print("Q: plan loader accepts string or list for target.template and rejects invalid values")
-    from routines.plan_loader import _target_kwargs
+    from engine.plan_loader import _target_kwargs
     kwargs = _target_kwargs({"template": ["templates/x/A.png", "templates/x/B.png"]})
     assert kwargs["template"] == ["templates/x/A.png", "templates/x/B.png"]
     kwargs2 = _target_kwargs({"template": "templates/x/A.png"})
@@ -395,27 +400,22 @@ def scenario_q_plan_loader_accepts_list_template() -> None:
 def main() -> None:
     _apply_patches(setattr)
     print("=" * 78)
-    print("ClickStep/Routine smoke test  (simulated template matching)")
-    print("A-E: step lifecycle with max_step_retry=4")
-    print("F-M: interrupt-first blockers + debounced priority resync (never abort by default)")
+    print("ClickStep/PlanRunner smoke test  (simulated template matching)")
+    print("A-O: step lifecycle + proactive self-anchoring (no timeout/abort)")
     print("=" * 78)
     scenario_a_retries_while_matched()
     print()
-    scenario_b_max_step_then_resync_no_abort()
+    scenario_c_transition_anchors()
     print()
-    scenario_c_transition_advances()
-    print()
-    scenario_d_loading_advances()
+    scenario_d_loading_waits_then_anchors()
     print()
     scenario_d2_reclick_when_current_returns()
     print()
     scenario_e_last_step_still_finishes()
     print()
-    scenario_f_resync_to_visible_step()
+    scenario_f_anchor_to_visible_step()
     print()
-    scenario_g_unknown_screen_never_aborts()
-    print()
-    scenario_h_resync_timeout_aborts()
+    scenario_g_unknown_screen_stays_lost()
     print()
     scenario_i_interrupt_dismissed_without_advancing()
     print()
@@ -423,13 +423,15 @@ def main() -> None:
     print()
     scenario_k_forward_successor_preferred()
     print()
+    scenario_r_terminal_step_not_an_anchor()
+    print()
     scenario_l_origin_is_last_resort()
     print()
-    scenario_m_non_origin_preferred_when_origin_visible()
+    scenario_m_non_origin_preferred()
     print()
     scenario_n_and_target_requires_all_templates()
     print()
-    scenario_o_and_target_confirms_when_any_template_gone()
+    scenario_o_and_target_waits_for_next_screen()
     print()
     scenario_p_interrupt_overlap_guard_multi_template()
     print()

@@ -9,3 +9,4 @@ build
 dist
 main.spec
 test_pynput.py
+config.json

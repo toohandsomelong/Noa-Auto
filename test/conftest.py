@@ -79,16 +79,22 @@ class FakeScreen:
         self.clicks: list[tuple[str, int, int]] = []
         self.captured = 0
         self.captured_region: dict[str, int] | None = None
+        self.match_calls: list[tuple[str, float, bool]] = []
+        self.fail_next_click = False
 
     def match(self, screenshot, path, threshold=0.85, grayscale=True):
         from core.match_result import MatchResult
 
+        self.match_calls.append((path, threshold, grayscale))
         if os.path.basename(path) in self.visible:
             return MatchResult(location=(10, 10), size=(10, 10), confidence=0.97)
         return None
 
     def click(self, point, *args, **kwargs):
         self.clicks.append((str(kwargs.get("label")), point[0], point[1]))
+        if self.fail_next_click:
+            self.fail_next_click = False
+            return False
         return True
 
     def capture(self, sct=None, region=None):
@@ -100,27 +106,25 @@ class FakeScreen:
 @pytest.fixture
 def fake_screen(monkeypatch) -> FakeScreen:
     import core.screen_bot as sb
-    import routines.click_step as cs
-    import routines.step as step_mod
-    import routines.routine as routine_mod
+    import engine.click_step as cs
+    import engine.plan_runner as plan_runner_mod
 
     fs = FakeScreen()
     monkeypatch.setattr(sb, "time", fs.clock)
     monkeypatch.setattr(cs, "time", fs.clock)
-    monkeypatch.setattr(step_mod, "time", fs.clock)
-    monkeypatch.setattr(routine_mod, "time", fs.clock)
+    monkeypatch.setattr(plan_runner_mod, "time", fs.clock)
     monkeypatch.setattr(sb, "_capture", fs.capture)
     monkeypatch.setattr(sb, "mss", types.SimpleNamespace(MSS=lambda: _FakeSct()))
     monkeypatch.setattr(cs, "match_template", fs.match)
-    monkeypatch.setattr(routine_mod, "match_template", fs.match)
+    monkeypatch.setattr(plan_runner_mod, "match_template", fs.match)
     monkeypatch.setattr(cs, "do_click", fs.click)
     return fs
 
 
 @pytest.fixture
 def tmp_plans(tmp_path) -> Iterator[Path]:
-    import routines
-    import routines.plan_loader as pl
+    import engine
+    import engine.plan_loader as pl
 
     original = pl.PLANS_DIR
     plans = tmp_path / "plans"
@@ -130,7 +134,7 @@ def tmp_plans(tmp_path) -> Iterator[Path]:
         yield plans
     finally:
         pl.PLANS_DIR = original
-        routines.refresh_routines()
+        engine.refresh_plans()
 
 
 @pytest.fixture
@@ -198,8 +202,7 @@ class FakeScreenBot:
         self.check_interval = 0.5
         self.preview = False
         self.preview_mode = "snapshot"
-        self.on_routine_done = None
-        self.on_routine_abort = None
+        self.on_plan_done = None
         self.on_frame = None
         self.on_step = None
 
@@ -209,7 +212,7 @@ class FakeScreenBot:
     def stop(self) -> None:
         pass
 
-    def start_routine(self, routine) -> None:
+    def start_plan(self, plan) -> None:
         pass
 
 

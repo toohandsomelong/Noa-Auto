@@ -21,6 +21,7 @@ from core.state_manager import BotState, StateManager
 logger = logging.getLogger(__name__)
 
 _CAPTURE_ORIGIN: tuple[int, int] = (0, 0)
+_CAPTURE_SCALE: tuple[float, float] = (1.0, 1.0)
 
 
 def set_capture_origin(x: int, y: int) -> None:
@@ -35,6 +36,42 @@ def set_capture_origin(x: int, y: int) -> None:
 
 def get_capture_origin() -> tuple[int, int]:
     return _CAPTURE_ORIGIN
+
+
+def set_capture_scale(sx: float, sy: float) -> None:
+    """Set the scale factor from reference (template) space to screen space.
+
+    When the current capture resolution differs from the resolution at which
+    templates were recorded, the screenshot is resized to the reference size
+    before matching.  Match coordinates therefore live in reference space and
+    must be multiplied by this scale before adding the capture origin.
+    """
+    global _CAPTURE_SCALE
+    _CAPTURE_SCALE = (sx, sy)
+
+
+def get_capture_scale() -> tuple[float, float]:
+    return _CAPTURE_SCALE
+
+
+def _reference_size(plan: Any) -> tuple[int | None, int | None]:
+    config = getattr(plan, "config", None)
+    if config is None:
+        return None, None
+    return (
+        getattr(config, "capture_width", None),
+        getattr(config, "capture_height", None),
+    )
+
+
+def _resize_to_reference(screenshot: Any, ref_w: int, ref_h: int) -> Any:
+    if not isinstance(screenshot, np.ndarray):
+        return screenshot
+    h, w = screenshot.shape[:2]
+    if w == ref_w and h == ref_h:
+        return screenshot
+    interpolation = cv2.INTER_AREA if ref_w < w or ref_h < h else cv2.INTER_LINEAR
+    return cv2.resize(screenshot, (ref_w, ref_h), interpolation=interpolation)
 
 
 def _capture(sct: Any | None = None, region: dict[str, int] | None = None) -> Any | None:
@@ -129,11 +166,10 @@ class ScreenBot:
         self.preview = preview
         self.preview_mode = preview_mode
         self.preview_fps = preview_fps
-        self._routine: Any | None = None
+        self._runner: Any | None = None
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
-        self.on_routine_done: Callable[[str], None] | None = None
-        self.on_routine_abort: Callable[[str], None] | None = None
+        self.on_plan_done: Callable[[str], None] | None = None
         self.on_frame: Callable[[dict], None] | None = None
         self.on_step: Callable[[dict], None] | None = None
         self._last_frame_ts: float = 0.0
@@ -141,8 +177,8 @@ class ScreenBot:
         self._last_step_signal: tuple | None = None
         self._capture_unavailable_logged: bool = False
 
-    def start_routine(self, routine: Any) -> None:
-        self._routine = routine
+    def start_plan(self, plan: Any) -> None:
+        self._runner = plan
         self._last_match_key = None
         self._last_step_signal = None
         if self.preview and self.on_frame is not None:
@@ -151,8 +187,8 @@ class ScreenBot:
             except Exception:
                 pass
 
-    def is_routine_running(self) -> bool:
-        return self._routine is not None and not self._routine.done
+    def is_plan_running(self) -> bool:
+        return self._runner is not None and not self._runner.done
 
     def start(self) -> None:
         self._stop_event.clear()
@@ -257,8 +293,8 @@ class ScreenBot:
         if not self.preview or self.on_frame is None:
             return
         step = None
-        if self._routine is not None and not self._routine.done:
-            step = self._routine.current_step()
+        if self._runner is not None and not self._runner.done:
+            step = self._runner.current_step()
 
         if self.preview_mode == "live":
             now = time.monotonic()
@@ -279,13 +315,13 @@ class ScreenBot:
     def _maybe_signal_step(self) -> None:
         if self.on_step is None:
             return
-        routine = self._routine
-        if routine is None or getattr(routine, "done", False):
+        plan = self._runner
+        if plan is None or getattr(plan, "done", False):
             return
-        step = getattr(routine, "current_step", lambda: None)()
+        step = getattr(plan, "current_step", lambda: None)()
         if step is None:
             return
-        name = getattr(routine, "name", None)
+        name = getattr(plan, "plan_key", None) or getattr(plan, "name", None)
         index = getattr(step, "index", None)
         label = getattr(step, "label", None)
         key = (name, index, label)
@@ -295,7 +331,7 @@ class ScreenBot:
         try:
             self.on_step({
                 "action": "step",
-                "routine": name,
+                "plan": name,
                 "step_index": index,
                 "step_label": label,
             })
@@ -335,37 +371,43 @@ class ScreenBot:
             return
         self._capture_unavailable_logged = False
         region, origin = resolved
+        ref_w, ref_h = _reference_size(self._runner)
+        if ref_w and ref_h:
+            sx = region["width"] / ref_w
+            sy = region["height"] / ref_h
+        else:
+            sx, sy = 1.0, 1.0
         set_capture_origin(*origin)
+        set_capture_scale(sx, sy)
         screenshot = _capture(sct, region)
         if screenshot is None:
             return
-        if self._routine is None or self._routine.done:
-            self._routine = None
+        if ref_w and ref_h:
+            screenshot = _resize_to_reference(screenshot, ref_w, ref_h)
+        if self._runner is None or self._runner.done:
+            self._runner = None
             return
 
         try:
-            self._routine.tick(screenshot)
+            self._runner.tick(screenshot)
         except Exception as e:
-            self.logger.error(f"Routine tick failed: {e}")
+            self.logger.error(f"PlanRunner tick failed: {e}")
         self._maybe_broadcast_frame(screenshot)
         self._maybe_signal_step()
 
-        if self._routine is not None and not self._routine.done:
+        if self._runner is not None and not self._runner.done:
             return
-        done_routine = self._routine
-        self._routine = None
+        done_plan = self._runner
+        self._runner = None
         self._last_step_signal = None
-        if done_routine is not None:
-            self._notify_routine_finished(done_routine)
+        if done_plan is not None:
+            self._notify_plan_finished(done_plan)
 
-    def _notify_routine_finished(self, routine: Any) -> None:
-        if routine.aborted:
-            callback, label = self.on_routine_abort, "on_routine_abort"
-        else:
-            callback, label = self.on_routine_done, "on_routine_done"
+    def _notify_plan_finished(self, plan: Any) -> None:
+        callback = self.on_plan_done
         if callback is None:
             return
         try:
-            callback(routine.name)
+            callback(plan.name)
         except Exception as e:
-            self.logger.error(f"{label} failed: {e}")
+            self.logger.error(f"on_plan_done failed: {e}")

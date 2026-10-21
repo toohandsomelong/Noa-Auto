@@ -38,6 +38,13 @@ def test_config_get_and_put(client):
     config = client.get("/api/config").json()
     assert config["repeat"] == 5
     assert config["check_interval"] == 1.0
+    assert "plans" in config
+
+
+def test_config_put_plans_chain(client):
+    response = client.put("/api/config", json={"plans": ["a", "b"]})
+    assert response.status_code == 200
+    assert client.get("/api/config").json()["plans"] == ["a", "b"]
 
 
 def test_preview_get_and_enable(client):
@@ -64,10 +71,10 @@ def test_list_windows(client):
     assert client.get("/api/windows").json() == {"windows": []}
 
 
-def test_list_routines(client):
-    response = client.get("/api/routines")
+def test_list_plans(client):
+    response = client.get("/api/plans")
     assert response.status_code == 200
-    assert "routines" in response.json()
+    assert "plans" in response.json()
 
 
 def test_plan_crud_roundtrip(client):
@@ -125,3 +132,48 @@ def test_record_status_initial(client):
     response = client.get("/api/record/status")
     assert response.status_code == 200
     assert response.json()["state"] == "IDLE"
+
+
+def test_record_start_passes_plan_name(client, controller):
+    """POST /api/record/start forwards plan_name to the controller."""
+    calls = []
+
+    def fake_start(*, name=None, plan_name=None):
+        calls.append((name, plan_name))
+        return {"ok": True, "state": "RECORDING"}
+
+    controller.start_recording = fake_start
+    response = client.post("/api/record/start", json={"plan_name": "existing"})
+    assert response.status_code == 200
+    assert response.json()["ok"] is True
+    assert calls == [(None, "existing")]
+
+
+def test_record_stop_passes_save_as(client, controller):
+    """POST /api/record/stop forwards save_as to the controller."""
+    calls = []
+
+    def fake_stop(save_as=None):
+        calls.append(save_as)
+        return {"ok": True, "name": "copy", "steps": 1}
+
+    controller.stop_recording = fake_stop
+    response = client.post("/api/record/stop", json={"save_as": "copy"})
+    assert response.status_code == 200
+    assert response.json()["ok"] is True
+    assert calls == ["copy"]
+
+
+def test_record_stop_without_body_defaults(client, controller):
+    """POST /api/record/stop works without a request body."""
+    calls = []
+
+    def fake_stop(save_as=None):
+        calls.append(save_as)
+        return {"ok": True, "name": "plan", "steps": 1}
+
+    controller.stop_recording = fake_stop
+    response = client.post("/api/record/stop")
+    assert response.status_code == 200
+    assert response.json()["ok"] is True
+    assert calls == [None]
